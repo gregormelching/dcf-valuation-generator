@@ -67,9 +67,6 @@ across industries: Apple, JPMorgan, Boeing, Tesla.
 structural inconsistency of XBRL taxonomies across industries, hands-on experience with
 common bug classes in "pick latest value per tag/year" logic.
 
-**Code:** see [`api_test.py`](api_test.py) (exploration script, replaced by a
-structured pipeline in Phase 1).
-
 ### Phase 1 — Data pipeline (3–5 days) IN PROGRESS
 - Structure the SEC EDGAR API integration cleanly (companyfacts/companyconcept)
 - Parser for core line items (Revenue, EBIT, D&A, CapEx, Working Capital, Shares
@@ -130,7 +127,11 @@ critical audience (interviewer).
 
 ## Open questions / next steps
 
-- Decide: exclude banks (JPMorgan case) from scope, or handle separately — decide at
-  the start of Phase 1
-- Finalize target company list for the pipeline (currently just the exploration
-  sample)
+- **Decided:** banks excluded from scope. JPMorgan's `OperatingIncomeLoss`, CapEx tags,
+  and all WorkingCapital component tags are missing entirely — a classic opex/COGS/
+  working-capital DCF isn't buildable for a bank under US-GAAP, independent of parser
+  robustness. The parser stays crash-safe for missing data generally, but banks are
+  simply not on the target company list.
+- Target company list finalized: Apple (tech hardware), Boeing (industrials/aerospace),
+  Tesla (auto/EV), Microsoft (software), Procter & Gamble (consumer staples). CIKs
+  verified against SEC's official company_tickers.json, not from memory.

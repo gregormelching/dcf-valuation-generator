@@ -5,9 +5,10 @@ from pathlib import Path
 
 companies = {
     "apple": "0000320193",
-    "jpmorgan": "0000019617",
     "boeing": "0000012927",
     "tesla": "0001318605",
+    "microsoft": "0000789019",
+    "procter_gamble": "0000080424",
 }
 
 REVENUE_TAGS = {
