@@ -107,14 +107,16 @@ def get_values(n: int, company: str, metric_tags: dict) -> dict:
 def clean_values(values: dict) -> dict:
     for year in values:
         sum_wc = 0
+        data = False
         for metric_name in values[year]:
             if metric_name == "WorkingCapital": 
                 for slot in values[year]["WorkingCapital"]:
                     if values[year]["WorkingCapital"][slot]:
                         sum_wc += values[year]["WorkingCapital"][slot]["Value"]
+                        data = True
             if len(values[year][metric_name]) == 1:
                 values[year][metric_name] = values[year][metric_name][metric_name]
-        values[year]["WorkingCapital"].update({"Value": sum_wc})
+        if data: values[year]["WorkingCapital"].update({"Value": sum_wc})
     return values
                 
 if __name__ == "__main__":
