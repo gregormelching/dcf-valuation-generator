@@ -10,36 +10,45 @@ companies = {
     "tesla": "0001318605",
 }
 
-REVENUE_TAGS = [
+REVENUE_TAGS = {
+    "Revenue": [
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
     "SalesRevenueNet",
     ]
-OPERATING_INCOME_TAGS = [
-    "OperatingIncomeLoss",
+}
+OPERATING_INCOME_TAGS = {
+    "OperatingIncome": [
+        "OperatingIncomeLoss",
     ]
-DA_TAGS = [
+}
+DA_TAGS = {
+    "D&A": [
     "DepreciationDepletionAndAmortization",
     "DepreciationAndAmortization",
     "DepreciationAmortizationAndAccretionNet",
     "Depreciation",
-]
-CAPEX_TAGS = [
+    ]
+}
+CAPEX_TAGS = {
+    "CapEx": [
     "PaymentsToAcquirePropertyPlantAndEquipment",
     "PaymentsToAcquireProductiveAssets",
     "PaymentsForCapitalImprovements",
-]
-SHARES_OUTSTANDING_TAGS = [
+    ]
+}
+SHARES_OUTSTANDING_TAGS = {
+    "SharesOutstanding": [
     "WeightedAverageNumberOfDilutedSharesOutstanding",
     "WeightedAverageNumberOfSharesOutstandingBasic",
-]
-WORKING_CAPITAL_TAGS = [
-    "IncreaseDecreaseInAccountsReceivable",
-    "IncreaseDecreaseInInventories",
-    "IncreaseDecreaseInAccountsPayable",
-    "IncreaseDecreaseInAccountsPayableAndAccruedLiabilities",
-    "IncreaseDecreaseInAccruedLiabilities",
-]
+    ]
+}
+WORKING_CAPITAL_TAGS = {
+    "Receivables": ["IncreaseDecreaseInAccountsReceivable"],
+    "Inventory":   ["IncreaseDecreaseInInventories"],
+    "Payables":    ["IncreaseDecreaseInAccountsPayableAndAccruedLiabilities",
+                     "IncreaseDecreaseInAccountsPayable"],
+}
 metrics = {
     "Revenue": REVENUE_TAGS,
     "OperatingIncome": OPERATING_INCOME_TAGS,
@@ -75,26 +84,40 @@ def get_values(n: int, company: str, metric_tags: dict) -> dict:
     with open(storage_path / f"{company}.json", "r") as f:
         data = json.load(f)
 
-        for year in years: 
-            values[year] = {metric: {} for metric in metric_tags}
+        for year in years:
+            values[year] = {metric_name: {key: {} for key in metric_tags[metric_name]} for metric_name in metric_tags} 
         
         for sec_layer in sec_layers:
             for unit in units:
-                for metric, names in metric_tags.items():
-                    for name in names: 
-                        if name in data["facts"][sec_layer]:
-                            if unit in data["facts"][sec_layer][name]["units"]:
-                                for entry in data["facts"][sec_layer][name]["units"][unit]:
-                                        
-                                    end = datetime.strptime(entry["end"], "%Y-%m-%d")
-                                    start = datetime.strptime(entry["start"], "%Y-%m-%d")
-                                    diff = end - start
-                                        
-                                    if diff.days > 350 and entry["form"] == "10-K" and end.year in years and not values[end.year][metric]:
-                                        values[end.year][metric].update({"Value": entry["val"], "Tag": name, "Form": entry["form"], "End": end.strftime("%Y-%m-%d")})
-                                    
+                for metric_name, slots in metric_tags.items(): 
+                    for slot_name, tag_list in slots.items():   
+                        for tag in tag_list:     
+                            if tag in data["facts"][sec_layer]:
+                                if unit in data["facts"][sec_layer][tag]["units"]:
+                                    for entry in data["facts"][sec_layer][tag]["units"][unit]:
+                                                
+                                        end = datetime.strptime(entry["end"], "%Y-%m-%d")
+                                        start = datetime.strptime(entry["start"], "%Y-%m-%d")
+                                        diff = end - start
+                                                
+                                        if diff.days > 350 and entry["form"] == "10-K" and end.year in years and not values[end.year][metric_name][slot_name]:
+                                            values[end.year][metric_name][slot_name].update({"Value": entry["val"], "Tag": tag, "Form": entry["form"], "End": end.strftime("%Y-%m-%d")})
     return values
 
+def clean_values(values: dict) -> dict:
+    for year in values:
+        sum_wc = 0
+        for metric_name in values[year]:
+            if metric_name == "WorkingCapital": 
+                for slot in values[year]["WorkingCapital"]:
+                    if values[year]["WorkingCapital"][slot]:
+                        sum_wc += values[year]["WorkingCapital"][slot]["Value"]
+            if len(values[year][metric_name]) == 1:
+                values[year][metric_name] = values[year][metric_name][metric_name]
+        values[year]["WorkingCapital"].update({"Value": sum_wc})
+    return values
+                
 if __name__ == "__main__":
     save_data("apple")
-    print(get_values(1, "apple", metrics))
+    apple_vals = get_values(2, "apple", metrics)
+    print(clean_values(apple_vals))
