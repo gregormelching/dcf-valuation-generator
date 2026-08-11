@@ -128,8 +128,35 @@ Flags are a list per value, so `outlier` no longer overwrites `negative`.
 dNWC definition deliberately excludes the catch-all buckets, so the size of what's excluded
 has to be measurable rather than assumed. Rebuilds dNWC from the cash flow statement as
 `NetIncome + D&A + SBC + DeferredTaxes - OCF` and reports `residuum = implicit - own`,
-absolute and as % of revenue. Still open: interpret the residuum per company and set a
-tolerance band — matters for Phase 2, where dNWC gets projected as % of revenue.
+absolute and as % of revenue.
+
+**Residuum interpreted and tolerance band set — DONE.** Two decisions, both non-obvious.
+
+*The residuum is an exclusion criterion, not a correction term.* The `implicit` formula
+assumes OCF consists solely of the four listed addbacks plus dNWC. Every other non-cash item
+— impairments, pensions, provisions, disposal gains, equity-method results — therefore lands
+in the residuum as well. It measures "missing working capital **plus** unlisted addbacks", not
+missing working capital. Boeing proves the point: negative in 8 of 10 recent years, median
+-3.95% of revenue. That is 737 MAX provisions and pension, not a working-capital gap. Adding
+the residuum back onto dNWC would import provisions into working capital.
+
+*The band is 3% of revenue (`RECON_TOLERANCE`), not 5%.* 5% was the first choice and was
+wrong, because the denominator is revenue while the validated quantity is dNWC. For Apple,
+dNWC runs 1-10bn against 416bn revenue, so a 5% band tolerates a residuum several times the
+size of the thing it checks. Concretely: Apple FY2025 has a 19.4bn residuum = 4.65% of
+revenue, which passes at 5% — while being ~19% of FCF and 4.4x the reported dNWC. At 3% the
+flag counts are Apple 3/10, Boeing 6/10, Tesla 3/10, Microsoft 2/10, P&G 3/10. Boeing losing
+6 of 10 years is uncomfortable but is the honest reading of its data quality, not a reason to
+loosen the band.
+
+`check_recon_tolerance` emits `recon_gap` above the band and `recon_unchecked` when the recon
+inputs are incomplete — the second is essential, otherwise a year with missing inputs is
+indistinguishable from a clean one. Same lesson as the `unchecked` flag in Phase 1b.
+
+**Still open:** Apple FY2025's 19.4bn residuum is flagged but unexplained. OCF (111.5bn) sits
+implausibly close to net income (112.0bn) despite 12.9bn SBC and 11.7bn D&A as addbacks, so
+there is a large cash outflow outside the four working-capital slots. Suspected cause is the
+Irish State Aid payment following the 2024 ECJ ruling — unverified, needs a look at the 10-K.
 
 ### Phase 1b — cleanup before Phase 2 — DONE
 
@@ -272,14 +299,94 @@ benefit) as unchecked and flagged Boeing's loss years as outliers.
 identical. Net debt series plausible across all five: Boeing ~0 in 2016 rising to 43bn in
 2022, Tesla crossing into net cash in 2020, P&G stable at 22-28bn.
 
+**Multi-slot summation refactored (`SLOT_SELECTORS`).** The three near-identical blocks in
+`clean_values` are replaced by one loop plus a selector function per multi-slot metric. Which
+slots contribute is now the selector's only job; summing, provenance and sign handling live in
+one place. Verified as a pure refactor: old vs. new over all 5 companies x 10 years x
+WorkingCapital/Cash/Debt gives zero differences in Value, Tag and Form.
+
+**Two fallbacks added on top, both by the same pattern:**
+- `select_pretax` — P&G's missing `PretaxIncome` is rebuilt from the Domestic/Foreign split.
+  Closes 2016-2019; **2020 and 2021 stay missing**, P&G tags neither the total nor the split
+  there. `PretaxIncome = NetIncome + Tax` remains the fallback of last resort if those two
+  years turn out to matter.
+- `select_deferred_taxes` — `DeferredIncomeTaxExpenseBenefit` genuinely ends at Apple FY2022;
+  the parser was not missing a tag. The successor is the tax-footnote jurisdiction split
+  (`DeferredFederalIncomeTaxExpenseBenefit` + `-Foreign-` + `-StateAndLocal-`), verified
+  identical to the total in all 15 overlap years, difference exactly 0. Setting the gap to 0
+  would have been wrong: Apple's deferred taxes are -3.02 / -3.03 / -1.34bn in 2023-2025.
+  Only Apple needs this fallback. All three components are required rather than "sum what
+  exists" — a partial sum would understate silently instead of failing visibly.
+
 **Open for later steps:**
 - Apple has no interest expense for 2024-2025 (step 4, cost of debt).
-- P&G has no `PretaxIncome` tag for 2016-2021 — only the Domestic/Foreign split, and nothing
-  at all for 2020-2021. Cleanest route is `PretaxIncome = NetIncome + Tax` rather than another
-  tag; caveat is that `NetIncomeLoss` includes discontinued operations and minority interests
-  (step 1, effective tax rate).
-- `clean_values` now has three near-identical summation blocks. A fourth multi-slot metric
-  means a fourth copy.
+
+#### Step 1 — effective tax rate — DONE
+
+Feeds `NOPAT = EBIT x (1 - t)` in the FCF bridge. Data is in the cache (`Tax`,
+`PretaxIncome`), so this step reads from `get_data`, not from the parser.
+
+**The dominant fact is the TCJA break at 2018.** The federal rate dropped 35% -> 21%, so
+pre-2018 effective rates carry no information about the future. Median ETR over unflagged
+years, before vs. from 2018:
+
+| | to 2017 | from 2018 |
+|---|---|---|
+| Apple | 26.1% (n=11) | 15.8% (n=8) |
+| Microsoft | 22.2% (n=10) | 16.5% (n=7) |
+| Boeing | 26.4% (n=11) | 12.5% (n=2) |
+| Tesla | none | 20.4% (n=5) |
+| P&G | 24.4% (n=10) | 20.3% (n=6) |
+
+A 20-year average would overstate the forward tax rate by 5-14pp on every company. The
+window therefore starts at 2018, which costs most of the history the 20-year pull just
+bought — the long series stays useful for revenue and margin drivers, not for tax.
+
+**Boeing is the problem case.** Six of eight post-2018 years are `unchecked` because pretax
+income is negative and an effective rate is not interpretable on a loss. The remaining two
+(2018: 9.9%, 2025: 15.1%) are a sample, not a signal.
+
+**Decisions taken** (`effective_tax_rate` in `logic/model.py`, the first module that reads
+from the cache rather than the parser):
+- **Median, not mean**, over the unflagged years in the window. The flag filter removes the
+  known one-offs, but not all of them; the median limits what a survivor can do. Not academic
+  here — mean vs. median differs by 2.8pp on P&G and 2.0pp on Tesla.
+- **Fallback to the marginal rate at n < 3.** Boeing is the case: six of eight post-2018 years
+  are `unchecked` because pretax income is negative and an effective rate is not interpretable
+  on a loss. The two survivors (2018: 9.9%, 2025: 15.1%) are a sample, not a signal.
+- **The return value carries `Source` and `n`, not just the rate.** Otherwise a skewed
+  valuation in Phase 5 cannot be traced back to whether the tax rate was measured or assumed.
+- **Terminal-year rate is the marginal rate** (`MARGINAL_TAX_RATE = 0.25`, US federal plus
+  state), not the historical ETR. Damodaran's argument: deferral and planning advantages do
+  not persist in perpetuity.
+
+| | rate | n | source |
+|---|---|---|---|
+| Apple | 15.8% | 8 | median |
+| Microsoft | 16.5% | 7 | median |
+| Tesla | 20.4% | 5 | median |
+| P&G | 20.3% | 6 | median |
+| Boeing | 25.0% | 2 | fallback |
+
+**Known conceptual approximation, to document rather than fix:** the ETR is measured on
+pretax income (i.e. after interest) but applied to EBIT (before interest). The interest tax
+shield is already captured in WACC via the after-tax cost of debt, so this double-counts it
+slightly. Standard practice, but it is an approximation and an interviewer may probe it.
+
+**Bug classes worth remembering from this step:**
+- The cache path and the parser path signal absence differently. Parser dicts leave `Value`
+  out entirely; `get_data` always sets the key and puts `None` in it. A guard written as
+  `"Value" not in ...` is therefore dead code against the DB and has to be `is None`. The
+  same guard also chained two checks as `"Value" not in (a.keys() or b.keys())`, where the
+  `or` short-circuits on the first non-empty view — the second operand was never checked.
+- `sorted(rates)[len(rates) // 2]` is not the median for an even count; it takes the upper of
+  the two middle values. Cost only 0.1pp on Apple by luck of the data.
+- A percentage conversion applied in one branch and not the other put `0.25` and `16.6` into
+  the same field. In `EBIT x (1 - t)` that is a sign flip, not a rounding error.
+- `get_data` briefly carried `start_year = 2018` as a default. That puts a tax-regime
+  assumption into the data layer, where the revenue and margin drivers would silently have
+  inherited an 8-year window instead of 20. The parameter is now required and the constant
+  lives in `model.py`.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)

@@ -68,16 +68,18 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
                     cursor.execute("INSERT INTO flags (data_id, flag) VALUES (?, ?)", (data_id, f))
         conn.commit()
 
-def get_data(company: str) -> dict:
+def get_data(company: str, start_year: int) -> dict:
+    years = range(start_year, datetime.now().year)
     values = {}
     query = "SELECT year, metric_name, value, tag, form, end_date, flag FROM data LEFT JOIN flags ON data.id = flags.data_id WHERE company = ?"
     with sqlite3.connect(database) as conn:
         cursor = conn.cursor()
         cursor.execute(query, (company,))
         for row in cursor.fetchall():
-            values.setdefault(row[0], {}).setdefault(row[1], {"Value": row[2], "Tag": row[3], "Form": row[4], "End": row[5], "Flag": []})
-            if not row[6] == None:
-                values[row[0]][row[1]]["Flag"].append(row[6])
+            if row[0] in years:
+                values.setdefault(row[0], {}).setdefault(row[1], {"Value": row[2], "Tag": row[3], "Form": row[4], "End": row[5], "Flag": []})
+                if not row[6] == None:
+                    values[row[0]][row[1]]["Flag"].append(row[6])
         return values
 
 
