@@ -388,6 +388,59 @@ slightly. Standard practice, but it is an approximation and an interviewer may p
   inherited an 8-year window instead of 20. The parameter is now required and the constant
   lives in `model.py`.
 
+#### Step 2a — driver ratios — DONE
+
+`driver_ratio(data, metric)` in `logic/model.py` returns the median of `metric / Revenue`
+over the usable years, as `{Ratio, n, Source}`. Feeds the EBIT margin, D&A, CapEx and dNWC
+legs of `FCF = EBIT x (1 - t) + D&A - CapEx - dNWC`. Window is 2016+.
+
+| | EBIT margin | D&A | CapEx | dNWC |
+|---|---|---|---|---|
+| Apple | 28.81% (n=10) | 3.56% (n=10) | 3.04% (n=10) | -0.34% (n=7) |
+| Microsoft | 41.59% (n=9) | 6.34% (n=10) | 11.56% (n=10) | -1.59% (n=8) |
+| P&G | 22.09% (n=8) | 3.88% (n=10) | 4.40% (n=10) | -0.97% (n=7) |
+| Tesla | 6.32% (n=7) | 5.08% (n=10) | 9.90% (n=10) | -4.04% (n=7) |
+| Boeing | 6.98% (n=5) | 2.58% (n=10) | 2.10% (n=10) | -0.30% (n=4) |
+
+**An `outlier` flag does not mean the same thing under every rule — reusing the flags as a
+driver filter needed that distinction.** The flags were designed to find data errors, not to
+select driver years. Under `yoy` (D&A, CapEx) an `outlier` means "grew by more than the
+threshold", which is normal for a growing company and says nothing about the *ratio* to
+revenue: Tesla's flagged D&A years sit at 5-7% of revenue, Microsoft's at 6-8%, i.e. dead
+normal levels. Excluding them cost Tesla 4 of 10 years and Microsoft 3, and biased the driver
+toward slow-growth years. Under `margin_change_pp` (OperatingIncome) and `pct_of_revenue`
+(WorkingCapital) an `outlier` means the ratio itself jumped — exactly what has to go. So the
+filter drops every flag except `outlier` on a `yoy` metric. Same category mismatch as the
+global 50% YoY threshold in Phase 1, one level up.
+
+Writing that filter as a list of flag names to exclude was the wrong shape and `recon_gap`
+was promptly forgotten, silently putting the reconciliation-gap years back into the dNWC
+driver (Apple -0.47% instead of -0.34%, Boeing -2.26% instead of -0.30%). Inverted now: any
+remaining flag disqualifies, with the single named exception. A new flag type costs no code
+change.
+
+**No fallback value, unlike the tax rate.** Below `MIN_YEARS` the function returns
+`Ratio: None` with `Source: "Insufficient"` rather than a substitute. The tax rate can fall
+back on the marginal rate because a statutory rate is a real external anchor; there is no
+statutory CapEx ratio, so inventing one would be fiction. Returning `0` was the first version
+and is worse than useless: `0` is a legitimate dNWC value (a company tying up no working
+capital), so the consumer cannot tell it apart from "no data" — the same distinction the
+`unchecked` flag exists for in Phase 1b. The projection must refuse to run on a `None` driver
+rather than substitute silently.
+
+Currently the guard never fires — the thinnest sample is Boeing dNWC at n=4. It is insurance.
+Verified against a case that does trip it: Boeing from 2019 returns `None` for both EBIT
+margin and dNWC at n=2, where the old version reported a -3.14% EBIT margin as a driver. That
+number is wrong but not obviously wrong, which is why the function has to be loud there.
+
+**Assumptions to carry into the projection, not code:**
+- Boeing's EBIT margin of 6.98% rests on 5 years, all pre-737-MAX-crisis (2007-2016 ran a
+  steady 7-8%). Unfiltered the median is -1.79%. Using the filtered figure asserts Boeing
+  returns to its structural normal — a judgment call, not a measurement.
+- Tesla's median revenue growth is 39.8%. Not projectable: it needs a fade from the measured
+  starting growth to the terminal growth rate over the projection horizon. That is step 2b
+  and the actual modelling decision in this phase.
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - Optional: Monte Carlo simulation over uncertain inputs for a valuation range
