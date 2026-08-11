@@ -78,6 +78,6 @@ def get_data(company: str) -> dict:
 
 if __name__ == "__main__":
     init_db() 
-    values = clean_values(get_values(10, "apple", metrics))
-    insert_data("apple", values, validate_values(values))
-    print(get_data("apple"))
+    values = clean_values(get_values(10, "microsoft", metrics))
+    insert_data("microsoft", values, validate_values(values))
+    print(get_data("microsoft"))

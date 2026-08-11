@@ -25,30 +25,52 @@ OPERATING_INCOME_TAGS = {
 }
 DA_TAGS = {
     "D&A": [
-    "DepreciationDepletionAndAmortization",
-    "DepreciationAndAmortization",
-    "DepreciationAmortizationAndAccretionNet",
-    "Depreciation",
+        "DepreciationDepletionAndAmortization",
+        "DepreciationAndAmortization",
+        "DepreciationAmortizationAndAccretionNet",
+        "Depreciation",
     ]
 }
 CAPEX_TAGS = {
     "CapEx": [
-    "PaymentsToAcquirePropertyPlantAndEquipment",
-    "PaymentsToAcquireProductiveAssets",
-    "PaymentsForCapitalImprovements",
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "PaymentsForCapitalImprovements",
     ]
 }
 SHARES_OUTSTANDING_TAGS = {
     "SharesOutstanding": [
-    "WeightedAverageNumberOfDilutedSharesOutstanding",
-    "WeightedAverageNumberOfSharesOutstandingBasic",
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
     ]
 }
 WORKING_CAPITAL_TAGS = {
-    "Receivables": ["IncreaseDecreaseInAccountsReceivable"],
-    "Inventory":   ["IncreaseDecreaseInInventories"],
-    "Payables":    ["IncreaseDecreaseInAccountsPayableAndAccruedLiabilities",
-                     "IncreaseDecreaseInAccountsPayable"],
+    "Receivables":      ["IncreaseDecreaseInAccountsReceivable"],
+    "Inventory":        ["IncreaseDecreaseInInventories"],
+    "Payables":         ["IncreaseDecreaseInAccountsPayableAndAccruedLiabilities",
+                            "IncreaseDecreaseInAccountsPayable"],
+    "DeferredRevenue":  ["IncreaseDecreaseInContractWithCustomerLiability",
+                            "IncreaseDecreaseInDeferredRevenue"],
+}
+WC_SIGNS = {
+    "Receivables": 1,
+    "Inventory": 1,
+    "Payables": -1,
+    "DeferredRevenue": -1
+}
+RECON_TAGS = {
+    "OCF": {"OCF":["NetCashProvidedByUsedInOperatingActivities",
+                    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"], 
+            },
+    "NetIncome": {"NetIncome": ["NetIncomeLoss",
+                                "ProfitLoss"],
+            },
+    "SBC": {"SBC": ["ShareBasedCompensation",
+                    "AllocatedShareBasedCompensationExpense"],
+            },
+    "DeferredTaxes": {"DeferredTaxes": ["DeferredIncomeTaxExpenseBenefit",
+                                        "DeferredIncomeTaxesAndTaxCredits"], 
+            },
 }
 metrics = {
     "Revenue": REVENUE_TAGS,
@@ -113,7 +135,7 @@ def clean_values(values: dict) -> dict:
             if metric_name == "WorkingCapital": 
                 for slot in values[year]["WorkingCapital"]:
                     if values[year]["WorkingCapital"][slot]:
-                        sum_wc += values[year]["WorkingCapital"][slot]["Value"]
+                        sum_wc += (values[year]["WorkingCapital"][slot]["Value"] * WC_SIGNS[slot])
                         data = True
             if len(values[year][metric_name]) == 1:
                 values[year][metric_name] = values[year][metric_name][metric_name]
@@ -121,6 +143,6 @@ def clean_values(values: dict) -> dict:
     return values
                 
 if __name__ == "__main__":
-    save_data("apple")
+    for company in companies: save_data(company)
     apple_vals = get_values(2, "apple", metrics)
     print(clean_values(apple_vals))

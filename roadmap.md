@@ -42,7 +42,7 @@ mechanics) that I'd otherwise have covered via BIWS but haven't yet.
 
 ## Roadmap with learning goals
 
-### Phase 0 — Scope & data exploration ✅ DONE
+### Phase 0 — Scope & data exploration — DONE
 Manually explored the SEC EDGAR API (companyfacts endpoint), compared 4 companies
 across industries: Apple, JPMorgan, Boeing, Tesla.
 
@@ -67,16 +67,63 @@ across industries: Apple, JPMorgan, Boeing, Tesla.
 structural inconsistency of XBRL taxonomies across industries, hands-on experience with
 common bug classes in "pick latest value per tag/year" logic.
 
-### Phase 1 — Data pipeline (3–5 days) IN PROGRESS
+### Phase 1 — Data pipeline (3–5 days) — DONE
 - Structure the SEC EDGAR API integration cleanly (companyfacts/companyconcept)
 - Parser for core line items (Revenue, EBIT, D&A, CapEx, Working Capital, Shares
   Outstanding) with fallback logic for differing tag names (based on Phase 0 findings)
 - Data validation: sanity checks (negative revenue, missing years, outliers)
 - Cache in SQLite
-- **Risk:** typically takes longer than estimated — budget 1.5x the first estimate
+- Verified end-to-end (parse → validate → cache) against all 5 target companies, no crashes
 
 **Learning goals:** design robust error handling and fallback logic for messy external
 data; treat data validation as its own architectural component, not an afterthought.
+
+**Sign convention fixed (was a real bug).** The `IncreaseDecreaseIn*` elements carry the
+*balance-sheet* direction of change, not the cash effect: a positive value means the
+position increased. Verified empirically against balance-sheet levels rather than assumed
+(Apple FY2021 Receivables: balance-sheet delta +10.158bn vs. flow element +10.125bn; holds
+across all years and all slots). `clean_values` previously summed all components with `+`,
+which treated a rise in payables as capital *tied up* instead of capital *provided*.
+Correct definition, now in `WC_SIGNS`:
+
+    dNWC = dReceivables + dInventory - dPayables - dDeferredRevenue
+
+Impact was material, not cosmetic: Apple FY2021 went from +25.1bn to -1.2bn (factor ~20,
+sign flip). Since `FCF = EBIT(1-t) + D&A - CapEx - dNWC`, the old value understated FY2021
+FCF by ~26bn (~7% of revenue). Post-fix the series is economically plausible: Apple, Tesla
+and P&G show structurally negative dNWC (supplier/customer financing), Boeing spikes to
++28% of revenue in 2020 and +13.7% in 2024 — the 737 MAX / 787 inventory builds, i.e. a
+real economic outlier, not a data artifact.
+
+**Deferred revenue added as a 4th working-capital slot** (`ContractWithCustomerLiability`
+with the pre-ASC-606 `DeferredRevenue` as fallback). Material for Microsoft (~5bn/yr) and
+Boeing (up to 4bn/yr). P&G doesn't tag it at all.
+
+**Known limitations of the working-capital definition (for Phase 7):**
+- Only AR, inventory, payables/accrued and deferred revenue are captured. The catch-all
+  buckets (`IncreaseDecreaseInOtherOperatingAssets`/`-Liabilities`,
+  `-OtherOperatingCapitalNet`, `-OtherCurrentAssets`/`-Liabilities`) are deliberately
+  excluded: they mix deferred taxes, provisions and one-offs into working capital. Apple's
+  largest such position is 38.5bn in FY2018 — essentially the TCJA repatriation tax
+  liability, which is not working capital and must not be projected forward as a % of
+  revenue in Phase 2. `-OtherOperatingCapitalNet` (Boeing, P&G) additionally carries a
+  double-counting risk as a net residual.
+- Apple stopped tagging deferred revenue separately from FY2023 (it moved into the
+  excluded catch-all). So Apple's dNWC includes deferred revenue for 2019-2022 but not
+  2023-2025 — a structural break in the series, magnitude 0.1-0.5% of revenue.
+- Tesla reports `AccountsPayable` and `AccountsPayableAndAccruedLiabilities` in parallel;
+  the fallback order picks the combined tag, which is correct here but by ordering rather
+  than by design.
+
+**Open item for Phase 2:** the 50% YoY outlier threshold flags `WorkingCapital` in ~74% of
+comparable company-years. The threshold isn't too tight — the check is category-mismatched:
+`WorkingCapital` is already a *delta*, so a relative YoY change is a second derivative that
+flips sign and jumps by orders of magnitude without anything being anomalous. Fix direction:
+make validation rules per-metric instead of one global loop, and validate delta metrics as
+`abs(dNWC / Revenue) > x` (x ~ 10-15%). `OperatingIncome` has a weaker version of the same
+problem (13/40 flags, driven by sign flips in Boeing/Tesla loss years). Also open: a value
+can only carry one flag today, and the outlier check overwrites `negative` — Phase 2 input
+filtering would be better served by a list of flags per value.
 
 ### Phase 2 — Modeling core (3–4 days)
 - FCF projection (revenue growth assumptions, margin trajectory)
