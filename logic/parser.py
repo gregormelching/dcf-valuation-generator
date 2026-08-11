@@ -70,6 +70,9 @@ RECON_TAGS = {
             },
     "DeferredTaxes": {"DeferredTaxes": ["DeferredIncomeTaxExpenseBenefit",
                                         "DeferredIncomeTaxesAndTaxCredits"], 
+                      "Fed": ["DeferredFederalIncomeTaxExpenseBenefit"],
+                      "For": ["DeferredForeignIncomeTaxExpenseBenefit"],
+                      "St": ["DeferredStateAndLocalIncomeTaxExpenseBenefit"],
             },
 }
 TAX_TAGS = {
@@ -79,7 +82,10 @@ PRETAX_TAGS = {
     "PretaxIncome": [
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-    ]
+    ],
+    "Domestic": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"],
+    "Foreign":  ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign"]
+
 }
 INTEREST_TAGS = {
     "InterestExpense": [
@@ -125,6 +131,35 @@ metrics = {
 units = ["USD", "shares"]   
 sec_layers = ["us-gaap", "dei"]                 
 storage_path = Path(Path(__file__).parent.parent.joinpath("storage"))
+
+def select_wc(slots):
+    return [s for s in WORKING_CAPITAL_TAGS if slots[s]]
+
+def select_cash(slots):
+    return [s for s in CASH_TAGS if slots[s]]
+
+def select_debt(slots):
+    chosen = [s for s in DEBT_TAGS if slots[s]]
+    if "CommercialPaper" in chosen and not slots["DebtCurrent"].get("Tag") == "LongTermDebtCurrent": chosen.remove("CommercialPaper")
+    return chosen
+
+def select_pretax(slots):
+    if slots["PretaxIncome"]: return ["PretaxIncome"]
+    if slots["Domestic"] and slots["Foreign"]: return ["Domestic", "Foreign"]
+    return []
+
+def select_deferred_taxes(slots):
+    if slots["DeferredTaxes"]: return ["DeferredTaxes"]
+    if slots["Fed"] and slots["For"] and slots["St"]: return ["Fed", "For", "St"]
+    return []
+
+SLOT_SELECTORS = {
+    "WorkingCapital": select_wc,
+    "Cash": select_cash,
+    "Debt": select_debt,
+    "PretaxIncome": select_pretax,
+    "DeferredTaxes": select_deferred_taxes
+}
 
 def get_response(cik):
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -181,52 +216,18 @@ def get_values(n: int, company: str, metric_tags: dict) -> dict:
 
 def clean_values(values: dict) -> dict:
     for year in values:
-        sum_wc = 0
-        sum_cash = 0
-        sum_debt = 0
-        debt_tags = []
-        debt_ends = []
-        cash_tags = []
-        cash_ends = []
-        wc_tags = []
-        wc_ends = []
-        data_wc = False
-        data_cash = False
-        data_debt = False
         for metric_name in values[year]:
-            if metric_name == "WorkingCapital": 
-                for slot in values[year]["WorkingCapital"]:
-                    if values[year]["WorkingCapital"][slot]:
-                        sum_wc += (values[year]["WorkingCapital"][slot]["Value"] * WC_SIGNS[slot])
-                        data_wc = True
-                        wc_tags.append(values[year][metric_name][slot]["Tag"])
-                        wc_ends.append(values[year][metric_name][slot]["End"])
-                        wc_form = values[year][metric_name][slot]["Form"]
-            if metric_name == "Cash":
-                for slot in values[year]["Cash"]:
-                    if values[year]["Cash"][slot]:
-                        sum_cash += values[year]["Cash"][slot]["Value"]
-                        data_cash = True
-                        cash_tags.append(values[year][metric_name][slot]["Tag"])
-                        cash_ends.append(values[year][metric_name][slot]["End"])
-                        cash_form = values[year][metric_name][slot]["Form"]
-            if metric_name == "Debt":
-                for slot in values[year]["Debt"]:
-                    if values[year]["Debt"][slot]:
-                        if slot == "CommercialPaper":
-                            if not values[year]["Debt"]["DebtCurrent"]["Tag"] == "LongTermDebtCurrent": continue
-                        sum_debt += values[year]["Debt"][slot]["Value"]
-                        data_debt = True
-                        debt_tags.append(values[year][metric_name][slot]["Tag"])
-                        debt_ends.append(values[year][metric_name][slot]["End"])
-                        debt_form = values[year][metric_name][slot]["Form"]
-            if len(values[year][metric_name]) == 1:
+            if metric_name in SLOT_SELECTORS:
+                slots = values[year][metric_name]
+                chosen = SLOT_SELECTORS[metric_name](slots)
+                if not chosen: continue
+                total = sum(slots[s]["Value"] * WC_SIGNS.get(s,1) for s in chosen)
+                tags = [slots[s]["Tag"] for s in chosen]
+                ends = [slots[s]["End"] for s in chosen]
+                forms = [slots[s]["Form"] for s in chosen]
+                slots.update({"Value": total, "Tag": "+".join(tags), "End": max(ends), "Form": forms[0]})
+            elif len(values[year][metric_name]) == 1:
                 values[year][metric_name] = values[year][metric_name][metric_name]
-
-        if data_wc: values[year]["WorkingCapital"].update({"Value": sum_wc, "Tag": "+".join(wc_tags), "End": max(wc_ends), "Form": wc_form})
-        if data_cash: values[year]["Cash"].update({"Value": sum_cash, "Tag": "+".join(cash_tags), "End": max(cash_ends), "Form": cash_form})
-        if data_debt: values[year]["Debt"].update({"Value": sum_debt, "Tag": "+".join(debt_tags), "End": max(debt_ends), "Form": debt_form})
-
     return values
                 
 if __name__ == "__main__":

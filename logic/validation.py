@@ -14,6 +14,8 @@ OUTLIER_RULES = {
     "Cash":                 ("yoy", 0.5),
 }
 
+RECON_TOLERANCE = 0.03
+
 def validate_values(values: dict) -> dict:
     flags = {year: {metric_name: [] for metric_name in values[year]} for year in values}
     exceptions = ["OperatingIncome", "WorkingCapital", "Tax", "PretaxIncome"]
@@ -69,9 +71,15 @@ def reconcile_working_capital(values: dict, recon_values: dict) -> dict:
 
     return reconciled
     
-    
+def check_recon_tolerance(flags: dict, rec_wc: dict) -> dict:
+    for year in rec_wc:
+        if len(rec_wc[year]) == 0: flags[year]["WorkingCapital"].append("recon_unchecked")
+        elif abs(rec_wc[year]["Residuum_pct"]) > RECON_TOLERANCE: flags[year]["WorkingCapital"].append("recon_gap")
+    return flags
     
 if __name__ == "__main__":
-    rec_values = clean_values(get_values(1, "apple", RECON_TAGS))
-    values = clean_values(get_values(1, "apple", metrics))
-    print(reconcile_working_capital(values, rec_values))
+    rec_values = clean_values(get_values(3, "apple", RECON_TAGS))
+    values = clean_values(get_values(3, "apple", metrics))
+    rec_wc = reconcile_working_capital(values, rec_values)
+    flags = validate_values(values)
+    print(check_recon_tolerance(flags, rec_wc))

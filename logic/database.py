@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 from parser import *
-from validation import validate_values
+from validation import *
 
 storage_path = Path(Path(__file__).parent.parent.joinpath("storage"))
 database = storage_path / 'values.db'
@@ -84,7 +84,10 @@ def get_data(company: str) -> dict:
 
 if __name__ == "__main__":
     init_db() 
-    values = clean_values(get_values(2, "microsoft", metrics))
-    flag_vals = validate_values(values)
-    print(values)
-    #insert_data("apple", values, flag_vals)
+    for c in companies:
+        values = clean_values(get_values(20, c, metrics))
+        rec_values = clean_values(get_values(20, c, RECON_TAGS))
+        reconciled = reconcile_working_capital(values, rec_values)
+        flag_vals = validate_values(values)
+        checked_flags = check_recon_tolerance(flag_vals, reconciled)
+        insert_data(c, values, checked_flags)
