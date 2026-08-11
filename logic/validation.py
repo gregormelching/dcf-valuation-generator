@@ -18,15 +18,21 @@ def validate_values(values: dict) -> dict:
             if "Value" not in values[year][metric_name].keys(): flags[year][metric_name].append("missing")
             else:
                 if metric_name not in exceptions and values[year][metric_name]["Value"] < 0: flags[year][metric_name].append("negative")
+                rev_ok = "Value" in values[year]["Revenue"].keys() and not values[year]["Revenue"]["Value"] == 0
+
                 if OUTLIER_RULES[metric_name][0] == "pct_of_revenue":
-                    if abs(values[year][metric_name]["Value"] / values[year]["Revenue"]["Value"]) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")
-                
+                    if not rev_ok: flags[year][metric_name].append("unchecked")
+                    elif abs(values[year][metric_name]["Value"] / values[year]["Revenue"]["Value"]) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")
+
                 if year-1 in values.keys() and "Value" in values[year-1][metric_name].keys():
-                    
-                    if not values[year-1][metric_name]["Value"] == 0:
-                        if OUTLIER_RULES[metric_name][0] == "yoy":    
-                            if abs(values[year][metric_name]["Value"] - values[year-1][metric_name]["Value"]) / abs(values[year-1][metric_name]["Value"]) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")
-                        elif OUTLIER_RULES[metric_name][0] == "margin_change_pp": 
+                    prev_rev_ok = "Value" in values[year-1]["Revenue"].keys() and not values[year-1]["Revenue"]["Value"] == 0
+
+                    if OUTLIER_RULES[metric_name][0] == "yoy":
+                        if values[year-1][metric_name]["Value"] == 0: flags[year][metric_name].append("unchecked")
+                        elif abs(values[year][metric_name]["Value"] - values[year-1][metric_name]["Value"]) / abs(values[year-1][metric_name]["Value"]) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")
+                    elif OUTLIER_RULES[metric_name][0] == "margin_change_pp":
+                        if not (rev_ok and prev_rev_ok): flags[year][metric_name].append("unchecked")
+                        else:
                             marge_t = values[year][metric_name]["Value"] / values[year]["Revenue"]["Value"]
                             marge_t1 = values[year-1][metric_name]["Value"] / values[year-1]["Revenue"]["Value"]
                             if abs(marge_t - marge_t1) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")

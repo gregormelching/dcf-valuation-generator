@@ -115,15 +115,62 @@ Boeing (up to 4bn/yr). P&G doesn't tag it at all.
   the fallback order picks the combined tag, which is correct here but by ordering rather
   than by design.
 
-**Open item for Phase 2:** the 50% YoY outlier threshold flags `WorkingCapital` in ~74% of
-comparable company-years. The threshold isn't too tight — the check is category-mismatched:
-`WorkingCapital` is already a *delta*, so a relative YoY change is a second derivative that
-flips sign and jumps by orders of magnitude without anything being anomalous. Fix direction:
-make validation rules per-metric instead of one global loop, and validate delta metrics as
-`abs(dNWC / Revenue) > x` (x ~ 10-15%). `OperatingIncome` has a weaker version of the same
-problem (13/40 flags, driven by sign flips in Boeing/Tesla loss years). Also open: a value
-can only carry one flag today, and the outlier check overwrites `negative` — Phase 2 input
-filtering would be better served by a list of flags per value.
+**Per-metric validation rules — DONE.** The single global 50% YoY threshold flagged
+`WorkingCapital` in ~74% of comparable company-years. Not a threshold problem but a category
+mismatch: `WorkingCapital` is already a *delta*, so a relative YoY change is a second
+derivative that flips sign and explodes without anything being anomalous. `OperatingIncome`
+had a weaker version of the same (13/40 flags, from sign flips in Boeing/Tesla loss years).
+Now `OUTLIER_RULES`, one rule per metric: `yoy` for Revenue/D&A/CapEx/SharesOutstanding,
+`margin_change_pp` (7pp) for OperatingIncome, `pct_of_revenue` (10%) for WorkingCapital.
+Flags are a list per value, so `outlier` no longer overwrites `negative`.
+
+**Working-capital reconciliation added** (`RECON_TAGS`, `reconcile_working_capital`). The
+dNWC definition deliberately excludes the catch-all buckets, so the size of what's excluded
+has to be measurable rather than assumed. Rebuilds dNWC from the cash flow statement as
+`NetIncome + D&A + SBC + DeferredTaxes - OCF` and reports `residuum = implicit - own`,
+absolute and as % of revenue. Still open: interpret the residuum per company and set a
+tolerance band — matters for Phase 2, where dNWC gets projected as % of revenue.
+
+### Phase 1b — cleanup before Phase 2 — DONE
+
+**Fixed: DB insert path was broken.** `insert_data` still assumed a string flag after flags
+became a list. `if not flag == "missing"` compared list to string, always True, so the
+missing-branch was dead code and a missing metric would raise `KeyError` on `["Tag"]`. On the
+happy path sqlite3 refuses to bind a list (`ProgrammingError`). Parse and validate worked,
+cache did not — the "verified end-to-end" claim for Phase 1 did not hold until now.
+
+**Flags moved into a separate 1:n table** rather than being flattened into a TEXT column.
+Exact filtering instead of `LIKE '%outlier%'`, and doing it now avoided a schema migration on
+a populated DB later. `values.db` was rebuilt from scratch; the old flag values came from the
+single-string era and no longer matched the current rule set.
+
+The non-obvious part is idempotency: `data` gets upserted, but the flags attached to a row
+survive the upsert. Without deleting them first, a second run either accumulates duplicates
+or — because of `UNIQUE(data_id, flag)` — fails outright with `IntegrityError`. Order per
+value is therefore: upsert `data` with `RETURNING id`, delete that id's flags, insert the
+current ones. Also worth remembering: `PRAGMA foreign_keys` is per *connection* and off by
+default in sqlite, so setting it once in `init_db` does nothing for later connections.
+
+**Fixed: validation assumed Revenue exists.** The `pct_of_revenue` and `margin_change_pp`
+branches read `values[year]["Revenue"]["Value"]` unconditionally — `KeyError` if Revenue was
+missing for a year, and no zero-denominator guard. A first fix wrapped the whole metric loop
+in the Revenue guard, which was worse: a year without Revenue produced no flags at all, not
+even `missing`, so it looked clean. The guard belongs on the two ratio checks only; `yoy`
+divides by the metric's own prior-year value and needs no Revenue.
+
+New flag `unchecked` for the three cases where a check cannot run (Revenue missing/zero for
+the current year, for the prior year, or a zero prior-year value). Without it, "checked and
+fine" and "not checkable" are indistinguishable in Phase 2.
+
+**Verified end-to-end:** all five companies, 10 years, parse → validate → cache → read back.
+300 rows in `data` (5 x 10 x 6), 35 flags, all `outlier`, no `missing` and no `unchecked` —
+the guards are insurance, not a live data problem. Two consecutive runs produce identical
+counts. Boeing 2020 dNWC is flagged at 28% of revenue, i.e. the rule catches the 737 MAX
+inventory build it was designed for.
+
+**Still open (minor):** in the WorkingCapital branch of `insert_data`, `form`/`end` are
+overwritten by whichever slot comes last in dict order. Harmless today (all slots come from
+the same 10-K) but it's an accident, not a decision.
 
 ### Phase 2 — Modeling core (3–4 days)
 - FCF projection (revenue growth assumptions, margin trajectory)
