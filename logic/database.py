@@ -40,20 +40,10 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
         for year in values:
             for metric_name in values[year]:
                 flag = flags[year][metric_name]
-      
-                if "missing" not in flag:
-                    if metric_name == "WorkingCapital":
-                        tag_lst = []
-                        for slot in values[year]["WorkingCapital"]:
-                            if values[year]["WorkingCapital"][slot] and not slot == "Value": 
-                                form = values[year]["WorkingCapital"][slot]["Form"]
-                                end = values[year]["WorkingCapital"][slot]["End"]
-                                tag_lst.append(slot)
-                        tag = "+".join(tag_lst)
-                    else: 
-                        tag = values[year][metric_name]["Tag"]
-                        form = values[year][metric_name]["Form"]
-                        end = values[year][metric_name]["End"]
+                if "missing" not in flag: 
+                    tag = values[year][metric_name]["Tag"]
+                    form = values[year][metric_name]["Form"]
+                    end = values[year][metric_name]["End"]
                     cursor.execute("""
                                    INSERT INTO data (company, year, metric_name, value, tag, form, end_date)
                                    VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -95,4 +85,6 @@ def get_data(company: str) -> dict:
 if __name__ == "__main__":
     init_db() 
     values = clean_values(get_values(2, "microsoft", metrics))
-    print(get_data("microsoft"))
+    flag_vals = validate_values(values)
+    print(values)
+    #insert_data("apple", values, flag_vals)

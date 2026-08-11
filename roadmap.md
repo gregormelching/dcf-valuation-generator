@@ -168,9 +168,11 @@ the guards are insurance, not a live data problem. Two consecutive runs produce 
 counts. Boeing 2020 dNWC is flagged at 28% of revenue, i.e. the rule catches the 737 MAX
 inventory build it was designed for.
 
-**Still open (minor):** in the WorkingCapital branch of `insert_data`, `form`/`end` are
-overwritten by whichever slot comes last in dict order. Harmless today (all slots come from
-the same 10-K) but it's an accident, not a decision.
+**Closed during Phase 2 step 0:** the `form`/`end` last-slot-wins issue. Root cause was that
+`insert_data` re-derived which slots contributed to a multi-slot metric, duplicating a
+decision `clean_values` had already made. `clean_values` now records `Tag`/`Form`/`End`
+alongside `Value` while it sums, so provenance can no longer drift from the number, and the
+multi-slot branch in `insert_data` became dead code and was removed.
 
 ### Phase 2 — Modeling core (3–4 days)
 - FCF projection (revenue growth assumptions, margin trajectory)
@@ -182,6 +184,102 @@ the same 10-K) but it's an accident, not a decision.
 **Learning goals:** understand CAPM, WACC, and DCF mechanics deeply enough to derive
 them from scratch and translate into code without a template. Before closing the
 phase: cross-check own derivation against a credible source (e.g. Damodaran).
+
+#### Step 0 — data the model needs but the pipeline didn't have — DONE
+
+Phase 1 pulled six income-statement and cash-flow items. The DCF also needs an effective tax
+rate, a cost of debt, and the enterprise-value-to-equity bridge, so five metrics were added:
+`Tax`, `PretaxIncome`, `InterestExpense`, `Debt`, `Cash`. Doing this before the modelling
+avoided discovering the gaps halfway through the projection.
+
+**Parser had to learn instant facts.** All six original metrics are *duration* facts with
+`start` and `end`; the `diff.days > 350` filter separated annual from quarterly values. Cash
+and debt are *instant* facts — balance-sheet positions with only an `end`. `get_values` read
+`entry["start"]` unconditionally. A first fix branched on `"start" in entry` but left `end`
+computed only inside the duration branch, which did not crash (a previous iteration's `end`
+was still bound) and instead silently returned empty slots. Lesson repeated from Phase 0:
+the dangerous version of a bug is the one that returns nothing rather than raising.
+
+**Restatements: newest filing wins.** The old guard "first match wins" picked whichever entry
+came first in the JSON, i.e. the *originally reported* value. Tesla's FY2016 10-K tagged long
+term debt as `5892016` — reported in thousands, a filer scaling error — and corrected it to
+`5892016000` in the FY2017 10-K. Off by three orders of magnitude, and it would not have been
+visible in any single number, only in the net-debt series looking wrong.
+
+The fix needs two levels, not one, or it reintroduces the Phase 0 cross-tag priority
+inversion: **different tags** are ranked by fallback-list order, **the same tag** by newest
+`filed`. Verified across all five companies and ten years: zero priority violations. Side
+effect worth knowing: the parser now returns restated figures, not as-originally-reported.
+For a DCF that is the right choice, but it is a choice — P&G's FY2016 cash moved from 7.102
+to 8.098bn because of the ASU 2016-18 restricted-cash restatement.
+
+**Tag findings (each verified against the raw JSON, not assumed):**
+- `InterestExpense` is deprecated. It ends 2023 for Apple/Tesla/P&G and 2024 for Microsoft;
+  successor is `InterestExpenseNonoperating`. Values are identical in overlap years, so it is
+  a pure rename. Boeing uses `InterestAndDebtExpense` throughout — not the same concept, it
+  includes non-interest financing cost, so Boeing's cost of debt will be overstated.
+- **Apple has no successor tag at all.** From FY2024 it reports interest only inside "Other
+  income/(expense), net". No interest expense is obtainable from EDGAR for 2024-2025.
+- `LongTermDebt` means different things per filer: total debt including the current portion
+  at Apple and Microsoft, non-current only at Boeing and Tesla. The fallback order happens to
+  resolve this correctly because Apple/Microsoft/P&G all have `LongTermDebtNoncurrent` — but
+  by ordering, not by design. Same pattern as the Tesla payables case in Phase 1.
+- Boeing has neither `LongTermDebtNoncurrent` nor `LongTermDebt` before 2019, only
+  `LongTermDebtAndCapitalLeaseObligations`. Including capital leases is correct for net debt
+  under ASC 842 anyway.
+- `DebtCurrent` already contains commercial paper; `LongTermDebtCurrent` does not. So
+  `CommercialPaper` is a conditional slot — added only when the current-debt slot was filled
+  from the narrow tag. Verified: P&G `DebtCurrent` 7.19 = `LongTermDebtCurrent` 3.84 +
+  `CommercialPaper` 3.33. Without the condition, P&G double-counts every year.
+- Microsoft used `AvailableForSaleSecuritiesCurrent` until 2018, `ShortTermInvestments` after.
+  Missing the old tag left a 106bn hole in FY2016 — the difference between 47bn net debt and
+  60bn net cash, i.e. a sign flip on the single most important balance-sheet input to the
+  equity bridge.
+- P&G stopped tagging `CashAndCashEquivalentsAtCarryingValue` after 2019; the successor is
+  `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`, which is a superset. It has
+  to be used or P&G has no cash at all from 2020. Restricted cash is immaterial at P&G, but
+  the series has a definitional break at 2019/2020.
+
+**Decision: long-term marketable securities count as cash.** Apple holds 91.5bn (FY2024) and
+up to 170bn (FY2018) in `MarketableSecuritiesNoncurrent`. These are government and corporate
+bonds held because the cash is not needed — non-operating assets, classified as non-current
+only because of residual maturity. Excluding them puts Apple at +41.5bn net debt instead of
+-50bn net cash, a 132bn swing straight into equity value. Added as a third `Cash` slot.
+Caveat: Microsoft's `LongTermInvestments` (14.6bn) also contains equity stakes that are not
+liquid securities — tolerable at that size, but not clean.
+
+**New validation rules.** `Tax` and `PretaxIncome` initially got `yoy` rules and immediately
+reproduced the Phase 1 category mismatch: Boeing flagged in 8 of 10 years, Tesla 7 of 10,
+because both are result figures that flip sign in loss years. Replaced by:
+- `PretaxIncome` → `margin_change_pp` at 10pp (7pp would flag Tesla's normal growth; pretax
+  margin is structurally more volatile than operating margin because it carries interest,
+  equity-method results and one-offs). Flags 6 of 39: Boeing 2019-2021, 2024, 2025 and Tesla
+  2018 — exactly the years to exclude from driver averaging.
+- `Tax` → new rule type `effective_rate`, checking `Tax / PretaxIncome` against a band rather
+  than an upper bound. The lower bound matters more: negative effective rates are the real
+  anomalies. Tesla 2023 at -50% is the valuation-allowance release on loss carryforwards, a
+  ~5bn one-off; Microsoft 2018 at 55% is the TCJA repatriation charge, the same root cause as
+  the 38.5bn working-capital outlier excluded in Phase 1.
+
+The band alone is not enough: with negative pretax income *and* a tax benefit the ratio comes
+out positive and looks normal. Boeing 2020 (-14.5bn pretax) passes at 17.5%, indistinguishable
+from Apple. The effective rate is simply not interpretable on a loss, so `PretaxIncome < 0`
+now yields `unchecked`. A first attempt tested the sign of `Tax` instead of `PretaxIncome`,
+which inverted the result in both directions — it dismissed Tesla 2023 (profitable, tax
+benefit) as unchecked and flagged Boeing's loss years as outliers.
+
+**Verified end-to-end:** 550 rows (5 x 10 x 11 metrics), 85 flags, two consecutive runs
+identical. Net debt series plausible across all five: Boeing ~0 in 2016 rising to 43bn in
+2022, Tesla crossing into net cash in 2020, P&G stable at 22-28bn.
+
+**Open for later steps:**
+- Apple has no interest expense for 2024-2025 (step 4, cost of debt).
+- P&G has no `PretaxIncome` tag for 2016-2021 — only the Domestic/Foreign split, and nothing
+  at all for 2020-2021. Cleanest route is `PretaxIncome = NetIncome + Tax` rather than another
+  tag; caveat is that `NetIncomeLoss` includes discontinued operations and minority interests
+  (step 1, effective tax rate).
+- `clean_values` now has three near-identical summation blocks. A fourth multi-slot metric
+  means a fourth copy.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)

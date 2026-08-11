@@ -7,11 +7,16 @@ OUTLIER_RULES = {
     "SharesOutstanding":    ("yoy", 0.1),
     "OperatingIncome":      ("margin_change_pp", 0.07),
     "WorkingCapital":       ("pct_of_revenue", 0.1),
+    "Tax":                  ("effective_rate", 0.4),
+    "PretaxIncome":         ("margin_change_pp", 0.1),
+    "InterestExpense":      ("yoy", 0.5),
+    "Debt":                 ("yoy", 0.5),
+    "Cash":                 ("yoy", 0.5),
 }
 
 def validate_values(values: dict) -> dict:
     flags = {year: {metric_name: [] for metric_name in values[year]} for year in values}
-    exceptions = ["OperatingIncome", "WorkingCapital"]
+    exceptions = ["OperatingIncome", "WorkingCapital", "Tax", "PretaxIncome"]
     
     for year in values:
         for metric_name in values[year]:
@@ -19,11 +24,16 @@ def validate_values(values: dict) -> dict:
             else:
                 if metric_name not in exceptions and values[year][metric_name]["Value"] < 0: flags[year][metric_name].append("negative")
                 rev_ok = "Value" in values[year]["Revenue"].keys() and not values[year]["Revenue"]["Value"] == 0
+                pre_ok = "Value" in values[year]["PretaxIncome"].keys() and not values[year]["PretaxIncome"]["Value"] == 0
 
                 if OUTLIER_RULES[metric_name][0] == "pct_of_revenue":
                     if not rev_ok: flags[year][metric_name].append("unchecked")
                     elif abs(values[year][metric_name]["Value"] / values[year]["Revenue"]["Value"]) > OUTLIER_RULES[metric_name][1]: flags[year][metric_name].append("outlier")
 
+                if OUTLIER_RULES[metric_name][0] == "effective_rate":
+                    if not pre_ok or values[year]["PretaxIncome"]["Value"] < 0: flags[year][metric_name].append("unchecked")
+                    elif values[year][metric_name]["Value"] / values[year]["PretaxIncome"]["Value"] > OUTLIER_RULES[metric_name][1] or values[year][metric_name]["Value"] / values[year]["PretaxIncome"]["Value"] < 0: flags[year][metric_name].append("outlier")
+                
                 if year-1 in values.keys() and "Value" in values[year-1][metric_name].keys():
                     prev_rev_ok = "Value" in values[year-1]["Revenue"].keys() and not values[year-1]["Revenue"]["Value"] == 0
 
@@ -62,6 +72,6 @@ def reconcile_working_capital(values: dict, recon_values: dict) -> dict:
     
     
 if __name__ == "__main__":
-    rec_values = clean_values(get_values(2, "apple", RECON_TAGS))
-    values = clean_values(get_values(2, "apple", metrics))
+    rec_values = clean_values(get_values(1, "apple", RECON_TAGS))
+    values = clean_values(get_values(1, "apple", metrics))
     print(reconcile_working_capital(values, rec_values))

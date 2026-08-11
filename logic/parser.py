@@ -72,12 +72,55 @@ RECON_TAGS = {
                                         "DeferredIncomeTaxesAndTaxCredits"], 
             },
 }
+TAX_TAGS = {
+    "Tax": ["IncomeTaxExpenseBenefit"]
+}
+PRETAX_TAGS = {
+    "PretaxIncome": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ]
+}
+INTEREST_TAGS = {
+    "InterestExpense": [
+        "InterestExpense",
+        "InterestExpenseDebt",
+        "InterestAndDebtExpense",
+        "InterestExpenseNonoperating",
+    ]
+}
+DEBT_TAGS = {
+    "DebtNoncurrent": ["LongTermDebtNoncurrent", "LongTermDebt", "LongTermDebtAndCapitalLeaseObligations"],
+    "DebtCurrent": ["DebtCurrent", "LongTermDebtCurrent"],
+    "CommercialPaper": ["CommercialPaper"],
+}
+CASH_TAGS = {
+    "Cash": ["CashAndCashEquivalentsAtCarryingValue",
+             "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",],
+    "ShortTermInv": [
+        "ShortTermInvestments",
+        "MarketableSecuritiesCurrent",
+        "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+        "AvailableForSaleSecuritiesCurrent"
+    ],
+    "LongTermInv": [
+        "MarketableSecuritiesNoncurrent",
+        "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+        "AvailableForSaleSecuritiesNoncurrent",
+        "LongTermInvestments"
+    ],
+}
 metrics = {
     "Revenue": REVENUE_TAGS,
     "OperatingIncome": OPERATING_INCOME_TAGS,
     "D&A": DA_TAGS, "CapEx": CAPEX_TAGS,
     "SharesOutstanding": SHARES_OUTSTANDING_TAGS,
     "WorkingCapital": WORKING_CAPITAL_TAGS,
+    "Cash": CASH_TAGS,
+    "Debt": DEBT_TAGS,
+    "PretaxIncome": PRETAX_TAGS,
+    "InterestExpense": INTEREST_TAGS,
+    "Tax": TAX_TAGS,
     }
 units = ["USD", "shares"]   
 sec_layers = ["us-gaap", "dei"]                 
@@ -118,31 +161,74 @@ def get_values(n: int, company: str, metric_tags: dict) -> dict:
                             if tag in data["facts"][sec_layer]:
                                 if unit in data["facts"][sec_layer][tag]["units"]:
                                     for entry in data["facts"][sec_layer][tag]["units"][unit]:
-                                                
+                                        
                                         end = datetime.strptime(entry["end"], "%Y-%m-%d")
-                                        start = datetime.strptime(entry["start"], "%Y-%m-%d")
-                                        diff = end - start
+                                        
+                                        if "start" in entry.keys():
                                                 
-                                        if diff.days > 350 and entry["form"] == "10-K" and end.year in years and not values[end.year][metric_name][slot_name]:
-                                            values[end.year][metric_name][slot_name].update({"Value": entry["val"], "Tag": tag, "Form": entry["form"], "End": end.strftime("%Y-%m-%d")})
+                                            start = datetime.strptime(entry["start"], "%Y-%m-%d")
+                                            is_yearly = (end - start).days > 350
+                                        
+                                        else: 
+                                            is_yearly = True        
+                                        
+                                        if end.year not in years or entry["form"] != "10-K": continue
+                                        slot = values[end.year][metric_name][slot_name]
+
+                                        if is_yearly and (not slot or (slot["Tag"] == tag and entry["filed"] > slot["Filed"])):
+                                                values[end.year][metric_name][slot_name].update({"Value": entry["val"], "Tag": tag, "Form": entry["form"], "End": end.strftime("%Y-%m-%d"), "Filed": entry["filed"]})
     return values
 
 def clean_values(values: dict) -> dict:
     for year in values:
         sum_wc = 0
-        data = False
+        sum_cash = 0
+        sum_debt = 0
+        debt_tags = []
+        debt_ends = []
+        cash_tags = []
+        cash_ends = []
+        wc_tags = []
+        wc_ends = []
+        data_wc = False
+        data_cash = False
+        data_debt = False
         for metric_name in values[year]:
             if metric_name == "WorkingCapital": 
                 for slot in values[year]["WorkingCapital"]:
                     if values[year]["WorkingCapital"][slot]:
                         sum_wc += (values[year]["WorkingCapital"][slot]["Value"] * WC_SIGNS[slot])
-                        data = True
+                        data_wc = True
+                        wc_tags.append(values[year][metric_name][slot]["Tag"])
+                        wc_ends.append(values[year][metric_name][slot]["End"])
+                        wc_form = values[year][metric_name][slot]["Form"]
+            if metric_name == "Cash":
+                for slot in values[year]["Cash"]:
+                    if values[year]["Cash"][slot]:
+                        sum_cash += values[year]["Cash"][slot]["Value"]
+                        data_cash = True
+                        cash_tags.append(values[year][metric_name][slot]["Tag"])
+                        cash_ends.append(values[year][metric_name][slot]["End"])
+                        cash_form = values[year][metric_name][slot]["Form"]
+            if metric_name == "Debt":
+                for slot in values[year]["Debt"]:
+                    if values[year]["Debt"][slot]:
+                        if slot == "CommercialPaper":
+                            if not values[year]["Debt"]["DebtCurrent"]["Tag"] == "LongTermDebtCurrent": continue
+                        sum_debt += values[year]["Debt"][slot]["Value"]
+                        data_debt = True
+                        debt_tags.append(values[year][metric_name][slot]["Tag"])
+                        debt_ends.append(values[year][metric_name][slot]["End"])
+                        debt_form = values[year][metric_name][slot]["Form"]
             if len(values[year][metric_name]) == 1:
                 values[year][metric_name] = values[year][metric_name][metric_name]
-        if data: values[year]["WorkingCapital"].update({"Value": sum_wc})
+
+        if data_wc: values[year]["WorkingCapital"].update({"Value": sum_wc, "Tag": "+".join(wc_tags), "End": max(wc_ends), "Form": wc_form})
+        if data_cash: values[year]["Cash"].update({"Value": sum_cash, "Tag": "+".join(cash_tags), "End": max(cash_ends), "Form": cash_form})
+        if data_debt: values[year]["Debt"].update({"Value": sum_debt, "Tag": "+".join(debt_tags), "End": max(debt_ends), "Form": debt_form})
+
     return values
                 
 if __name__ == "__main__":
-    for company in companies: save_data(company)
-    apple_vals = get_values(2, "apple", metrics)
-    print(clean_values(apple_vals))
+    apple_vals = clean_values(get_values(1, "microsoft", metrics))
+    print(apple_vals)
