@@ -88,7 +88,7 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") ->
 def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
-    value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0} for year in range(last_year + 1, last_year + 2 + years)}
+    value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0, "EBIT_Margin": ""} for year in range(last_year + 1, last_year + 2 + years)}
     EBIT_MARGIN = driver_ratio(data, "OperatingIncome")["Driver_Ratio"]
     D_AND_A_MARGIN = driver_ratio(data, "D&A")["Driver_Ratio"]
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")["Driver_Ratio"]
@@ -96,19 +96,22 @@ def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dic
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, DNWC_MARGIN]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
     rev = project_revenue(data, years, base)
+    if data[last_year]["OperatingIncome"]["Value"] is not None and data[last_year]["Revenue"]["Value"] not in (0, None): LAST_EBIT_MARGIN = data[last_year]["OperatingIncome"]["Value"] / data[last_year]["Revenue"]["Value"]
+    else: raise ValueError("Missing data for Operating Income or Revenue")
     i = 0
     
     for year in projected_years:
         i += 1
+        m_t = LAST_EBIT_MARGIN + (EBIT_MARGIN - LAST_EBIT_MARGIN) * i / len(projected_years)
         cur_rev = rev[year]["Revenue"]
-        ebit = cur_rev * EBIT_MARGIN
+        ebit = cur_rev * m_t
         nopat = ebit * (1 - t)
         da = cur_rev * D_AND_A_MARGIN
         capex = cur_rev * CAP_EX_MARGIN
         dnwc = cur_rev * DNWC_MARGIN
         fcf = nopat + da - capex - dnwc
+        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t})
         
-        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf})
         if i == years:
             cur_rev = rev[year]["Revenue"] * (1 + TERMINAL_GROWTH)
             t = MARGINAL_TAX_RATE   
@@ -118,11 +121,9 @@ def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dic
             capex = cur_rev * CAP_EX_MARGIN
             dnwc = cur_rev * DNWC_MARGIN
             fcf = nopat + da - capex - dnwc     
-            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV"})
+            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN})
     
     return value
     
 if __name__ == "__main__":
-    data = get_data("apple", 2016)
-    print(project_revenue(data, 10)[2035])
-    print(project_revenue(data, 10, "Mean_Last_Three")[2035])
+    print(project_fcf(get_data("apple", 2016), 10))
