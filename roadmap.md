@@ -536,6 +536,90 @@ horizon driver ratios into perpetuity, but in steady state reinvestment is pinne
 of revenue on CapEx just because it did during the growth phase. This one changes the terminal
 value directly and therefore most of the valuation.
 
+#### Step 3a — price data and the risk-free rate — PART 1 DONE
+
+WACC needs a beta, and beta needs price series. New module `logic/prices.py` with `SYMBOLS`
+(the five companies plus `"market": "^GSPC"`) and `fetch_prices(symbol, freq)`. The market
+index is a sixth entry in the same dict rather than a special case, so it runs through the
+identical calendar and adjustment path — otherwise the two return series drift apart and the
+covariance is measured against a different grid.
+
+**First external dependency.** Everything in `logic/` ran on the standard library until now.
+`requirements.txt` pins the full `pip freeze`, not just the three direct packages — the
+transitive tree matters here because the behaviour depends on it. Current: `yfinance==1.5.2`,
+`pandas==3.0.5`. Two traps on the way in: `pip freeze > requirements.txt` under PowerShell
+writes UTF-16LE, which git treats as binary and `pip install -r` cannot read (use
+`Out-File -Encoding utf8`), and `raise_errors` is deprecated in yfinance 1.5.2 in favour of
+`yf.config.debug.hide_exceptions`.
+
+**The split assumption was wrong, and it was the entire premise of this step.** The stated
+risk was that unadjusted prices silently destroy beta, because Apple (4:1, 2020-08-31) and
+Tesla (5:1, 2020-08-31 and 3:1, 2022-08-25) split inside the window and would show as
+phantom crashes of 75-80%. Measured, that cannot happen: Yahoo's `Close` is *always*
+split-adjusted, whatever `auto_adjust` is set to. `auto_adjust` controls the **dividend**
+adjustment only. AAPL 2019-08-30 reads 50.08 adjusted vs 52.19 raw — a 4% level difference
+that decays to 0.09% by 2026 — while TSLA is bit-identical in both modes because it pays no
+dividend. So the real exposure is a systematic understatement of returns in ex-dividend
+months for AAPL, MSFT and PG, worth roughly 0.15-0.25pp per quarter. That biases beta
+slightly; it does not wreck it.
+
+Consequence for the code: `MAX_SPLIT_DROP = -0.60` stays, but demoted to a plausibility
+tripwire rather than the thing that catches the failure. It has never fired and cannot fire
+via `auto_adjust` — the worst genuine month in the window is Boeing at -45.8% (2020-03).
+The check that actually detects an unadjusted pull is the **presence of an `Adj Close`
+column**: yfinance only emits it when `auto_adjust` was off. One-sided (`returns.min()`,
+not `abs().max()`) because a 3:1 split is -66.7% while Tesla legitimately gained +74.1% in
+a single month — a two-sided threshold would have raised on clean data.
+
+**Why a daily pull plus own resampling, not `interval="1mo"`.** Yahoo's monthly bars are
+labelled with the month *start* and the final bar is the partial current month, so neither
+"61 rows" nor "last row on a month end" is obtainable from them. `Ticker.history` is used
+over `yf.download` because the latter still defaults to `multi_level_index=True`, where
+`df["Close"]` returns a DataFrame rather than a Series and everything downstream computes
+silently wrong. Pull is `period="7y"` daily; six years would put the 2020 splits inside the
+first, partial bucket where no prior month exists to compare against. Order matters: the
+return check runs on the full ~84-month series, the trim to `N_MONTHS`/`N_WEEKS` happens
+after.
+
+**Two non-obvious mechanics, both silent if missed:** `resample("ME")` labels on the
+calendar month end even when the data stops mid-month, so the newest row looks complete
+while holding a shorter return period — it has to be dropped by comparing its label against
+the last actual trading day, or the row count depends on which weekday the script runs.
+And sqlite3 refuses to bind `numpy.float64`, so the values need an explicit `float()`.
+
+**Cache layer.** Two tables, `prices` and `raw_downloads`, and `insert_prices` /
+`get_prices` / `insert_raw_download` in `database.py` — same split as Phase 1, network in
+its own module, DB access in `database.py`. `symbol` stores the project key (`"apple"`,
+`"market"`), not the Yahoo ticker; the ticker is an external identifier like the CIK and
+never enters the DB.
+
+The `adjusted` column needed a second half to be worth anything. `UNIQUE(symbol, date, freq)`
+does not include it, so an unadjusted comparison run would overwrite the clean rows at the
+same keys and the column would document the damage instead of preventing it. The upsert
+therefore carries `WHERE EXCLUDED.adjusted >= prices.adjusted`, and `get_prices` filters
+`adjusted = 1` — a symbol present only in raw form then falls into the length guard and
+raises, rather than quietly returning prices. `get_prices(symbol, freq, n)` takes `n` as a
+required parameter for the same reason `get_data` takes `start_year`: the window is a
+modelling assumption and does not belong in the data layer. It raises instead of returning
+`None` because a covariance over 40 months instead of 61 computes fine and produces a
+plausible number.
+
+`raw_downloads` stores `df.to_csv()` of the daily frame with the yfinance version, always
+tagged `freq = "1d"` regardless of what the caller asked for, since that is what the body
+contains. Honest limitation: this is not the HTTP response. yfinance parses Yahoo's JSON
+internally and only hands out a DataFrame, so the CSV is the earliest point the code sees
+the data — the wire body would require bypassing yfinance and reimplementing the adjustment.
+
+**Verified (dry run, inserts patched out):** all six symbols land on an identical grid,
+monthly 61 rows `2021-07-31` to `2026-07-31`, weekly 105 rows `2024-08-09` to `2026-08-07`.
+
+**Open:** `^GSPC` is a price index without dividends while the stock series are
+dividend-adjusted total-return series. Immaterial for beta, but a historical ERP measured
+from it understates by roughly 2pp — `^SP500TR` is the alternative, with shorter history.
+Boeing's 2024 capital raise is in the window; `auto_adjust` correctly does not touch
+dilution, so Boeing's beta partly measures a financing event. `risk_free_rate()` against
+FRED DGS10 is still open, as is the whole of step 3b (beta).
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - Optional: Monte Carlo simulation over uncertain inputs for a valuation range

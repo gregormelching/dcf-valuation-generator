@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 from parser import *
 from validation import *
+import yfinance as yf
 
 storage_path = Path(Path(__file__).parent.parent.joinpath("storage"))
 database = storage_path / 'values.db'
@@ -23,6 +24,21 @@ create_table = '''
             flag TEXT,
             FOREIGN KEY (data_id) REFERENCES data(id) ON DELETE CASCADE,
             UNIQUE(data_id, flag)
+        );
+        CREATE TABLE IF NOT EXISTS prices (
+            symbol TEXT NOT NULL,
+            date TEXT NOT NULL, 
+            close REAL NOT NULL,
+            freq TEXT NOT NULL,
+            adjusted INTEGER NOT NULL,
+            UNIQUE(symbol, date, freq)
+        );
+        CREATE TABLE IF NOT EXISTS raw_downloads (
+            symbol TEXT NOT NULL,
+            freq TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            body TEXT NOT NULL,
+            lib_version TEXT NOT NULL
         )
     '''
 
@@ -82,7 +98,31 @@ def get_data(company: str, start_year: int) -> dict:
                     values[row[0]][row[1]]["Flag"].append(row[6])
         return values
 
+def insert_prices(symbol: str, freq: str, rows: list, adjusted: int) -> None: 
+    with sqlite3.connect(database) as conn:
+        cursor = conn.cursor()
+        for row in rows:
+            cursor.execute("""INSERT INTO prices (symbol, date, close, freq, adjusted) 
+                           VALUES (?, ?, ?, ?, ?)
+                           ON CONFLICT(symbol, date, freq) DO UPDATE SET close = EXCLUDED.close, adjusted = EXCLUDED.adjusted
+                           WHERE EXCLUDED.adjusted >= prices.adjusted""",
+                           (symbol, row[0], row[1], freq, adjusted)
+                           )
+        conn.commit()
 
+def get_prices(symbol: str, freq: str, n: int) -> list:
+    with sqlite3.connect(database) as conn:
+        cursor = conn.cursor()
+        query = "SELECT date, close FROM prices WHERE symbol = ? AND freq = ? AND adjusted = 1 ORDER BY date DESC LIMIT ?"
+        cursor.execute(query, (symbol, freq, n))
+        rows = cursor.fetchall()
+        if len(rows) < n: raise ValueError("Too few prices for the given symbol and frequency")
+        return sorted(rows)
+
+def insert_raw_download(symbol: str, freq: str, body: str, lib_version: str):
+    with sqlite3.connect(database) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO raw_downloads (symbol, freq, fetched_at, body, lib_version) VALUES (?, ?, ?, ?, ?)", (symbol, freq, datetime.now().isoformat(), body, lib_version))
 
 if __name__ == "__main__":
     init_db() 
