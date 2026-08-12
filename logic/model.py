@@ -66,25 +66,26 @@ def growth_rate(data: dict) -> dict:
     else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient"})
     return value
   
-def project_revenue(data: dict, years: int) -> dict:
+def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Growth_Rate": 0, "Revenue": 0} for year in projected_years}
-    growth = growth_rate(data)
-    if growth["Growth_Rate_Median"] is None: raise ValueError("Median growth rate is not defined")
-    base_growth = growth["Growth_Rate_Median"]
+    growth_rates = growth_rate(data)
+    if base not in ["Growth_Rate_Median", "Mean_Last_Three", "Growth_Rate_Mean"]: raise ValueError(f"Unknown base: {base}")
+    if growth_rates[base] is not None: growth = growth_rates[base]
+    else: raise ValueError(f"{base} is not defined")
     rev = data[sorted(data)[-1]]["Revenue"]["Value"]
     i = 0
     
     for year in projected_years:
         i += 1
-        g_t = round(base_growth + (TERMINAL_GROWTH - base_growth) * i/len(projected_years), 4)
+        g_t = round(growth + (TERMINAL_GROWTH - growth) * i/len(projected_years), 4)
         rev *= (1 + g_t)
-        value[year].update({"Growth_Rate": g_t, "Revenue": rev})
+        value[year].update({"Growth_Rate": g_t, "Revenue": rev, "Source": base})
     
     return value
 
-def project_fcf(data: dict, years: int) -> dict:
+def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0} for year in range(last_year + 1, last_year + 2 + years)}
@@ -93,9 +94,8 @@ def project_fcf(data: dict, years: int) -> dict:
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")["Driver_Ratio"]
     DNWC_MARGIN = driver_ratio(data, "WorkingCapital")["Driver_Ratio"]
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
-    rev = data[sorted(data)[-1]]["Revenue"]["Value"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, DNWC_MARGIN]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
-    rev = project_revenue(data, years)
+    rev = project_revenue(data, years, base)
     i = 0
     
     for year in projected_years:
@@ -123,11 +123,6 @@ def project_fcf(data: dict, years: int) -> dict:
     return value
     
 if __name__ == "__main__":
-    for c in companies:
-        data = get_data(c, 2020)
-        print(f"{c}: {effective_tax_rate(data)}")
-        print(f"{c}: {driver_ratio(data, "D&A")}")
     data = get_data("apple", 2016)
-    print(project_revenue(data, 10))
-    print(project_fcf(data, 10))
-    print(growth_rate(data))
+    print(project_revenue(data, 10)[2035])
+    print(project_revenue(data, 10, "Mean_Last_Three")[2035])

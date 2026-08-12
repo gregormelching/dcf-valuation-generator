@@ -437,9 +437,104 @@ number is wrong but not obviously wrong, which is why the function has to be lou
 - Boeing's EBIT margin of 6.98% rests on 5 years, all pre-737-MAX-crisis (2007-2016 ran a
   steady 7-8%). Unfiltered the median is -1.79%. Using the filtered figure asserts Boeing
   returns to its structural normal — a judgment call, not a measurement.
-- Tesla's median revenue growth is 39.8%. Not projectable: it needs a fade from the measured
-  starting growth to the terminal growth rate over the projection horizon. That is step 2b
-  and the actual modelling decision in this phase.
+- Tesla's median revenue growth is 28.31% on the 2016+ window. (An earlier note here said
+  39.8% — that figure came from a 2015 start, where the extra year makes the sample even and
+  shifts the median. Corrected, and a reminder that every ratio in this file is only defined
+  together with its window.) Not projectable as a constant: it needs a fade from the measured
+  starting growth to the terminal growth rate over the projection horizon. That is step 2b.
+
+#### Step 2b — revenue growth and FCF projection — DONE
+
+Three functions in `logic/model.py`. `growth_rate(data)` measures YoY revenue growth over the
+usable year pairs and returns median, mean, mean of the last three, `n` and `Source`.
+`project_revenue(data, years)` fades from the measured growth to `TERMINAL_GROWTH = 0.025`.
+`project_fcf(data, years)` applies the step-2a drivers to the projected revenue and returns
+`years + 1` rows — the extra one is the terminal-year cashflow, marked `Flag: "TV"`.
+
+| | Median | Mean | Last three | n |
+|---|---|---|---|---|
+| Apple | 6.30% | 8.04% | 1.88% | 9 |
+| Microsoft | 14.28% | 13.43% | 12.49% | 9 |
+| P&G | 2.48% | 2.90% | 1.68% | 9 |
+| Tesla | 28.31% | 36.91% | 5.60% | 9 |
+| Boeing | 6.94% | 1.18% | 12.26% | 9 |
+
+**Why median, and why all three are reported.** CAGR was rejected: it reads only the two
+endpoints, and Boeing's window starts pre-737-MAX-crisis and ends mid-recovery, so the CAGR
+describes the two chosen years rather than the business. The mean is dragged by single
+outlier years (Boeing 1.18% vs. 6.94% median — one crisis year does that). The median is the
+base case; mean and last-three are carried along because step 2c has to choose between them,
+and a function that silently returns only its own preferred answer hides that decision.
+
+**Linear fade:** `g_t = g0 + (g_terminal - g0) * i/N`, so terminal growth is reached exactly
+in year N, not one year early and not one year late. That matters because the terminal value
+in step 4 assumes the company has *already arrived* at steady state — if the last projected
+year still grows at 8%, the Gordon formula is applied to a company that isn't in perpetuity
+yet, and the error lands in the 60-80% of enterprise value that TV represents.
+
+**The terminal year uses `MARGINAL_TAX_RATE`, not the measured ETR.** Apple's measured 15.78%
+comes from deferral, IP structures and foreign mix — all finite, and all under pressure from
+Pillar Two's 15% global minimum and the Irish State Aid ruling. In perpetuity the statutory
+rate is the honest assumption. Effect: `(1 - 0.25) / (1 - 0.1578) = 0.89`, terminal NOPAT
+-11%, roughly 7-9% of total value. Visible in the verification below as the FCF drop from
+157.83 to 144.68 while revenue still grows.
+
+**Verified — Apple, `project_fcf(get_data("apple", 2016), 10)`, in bn:**
+
+| Year | Revenue | FCF | |
+|---|---|---|---|
+| 2026 | 440.80 | 110.75 | first projected year |
+| 2035 | 628.23 | 157.83 | `Growth_Rate` exactly 0.025 |
+| 2036 | 643.93 | 144.68 | `Flag: "TV"`, marginal tax rate |
+
+**Four bugs worth keeping, all of the silent kind:**
+- The horizon was tied to the wall clock (`datetime.now().year + years`). It produced exactly
+  10 years in 2026 by coincidence and would have quietly become 9 in 2027. Projection lengths
+  must come from the data's last year, never from today's date.
+- The terminal row was written by a branch that never fired — first comparing a projected year
+  against the last *historical* year, then against a year one past the range end. No row ever
+  carried `Flag`, and nothing raised. Only counting the returned rows exposed it.
+- The terminal revenue was first taken from `project_revenue(data, years + 1)`. That re-lays
+  the whole fade over 11 years and changes *every* growth rate: 2035 becomes 639.84 instead of
+  628.23. The terminal year is one step of `TERMINAL_GROWTH` past the last projected year, not
+  a re-projection.
+- `if any([...]) is None` as the missing-driver guard: `any()` returns a bool, never `None`,
+  so the guard was constantly false and step 2a's deliberate `None` would have propagated into
+  the arithmetic as a `TypeError` deep in the loop. Now `if None in [...]: raise ValueError`.
+  Same family as the `or`-short-circuit bug from step 1 — a guard that reads correctly in
+  English but evaluates to a constant.
+
+Also found while filtering flags: `flags = data[year][metric]["Flag"]` binds a reference, so
+`flags.remove("outlier")` edited the caller's data in place. Verified on Tesla: five Revenue
+years carried `outlier` before the call and zero after it. Any later consumer would have seen
+silently cleaned data. Copy via list comprehension.
+
+#### Step 2c — the three modelling decisions left in the projection — OPEN
+
+The projection runs; what it assumes is not yet decided. In order:
+
+**1. Which growth rate is the base.** The median is a statement about the past nine years, not
+about next year, while the fade needs the *current* level to fade down from. Tesla: 28.31%
+median vs. 5.60% over the last three years — a factor of 2.50 in year-10 revenue (347.7 vs.
+138.9bn). Boeing inverts it: 6.94% median off a crisis-depressed base vs. 12.26% recently,
+which is recovery, not a steady state (138.8 vs. 173.6bn). Apple 1.21x, Microsoft 1.08x,
+P&G 1.04x — for the stable three it barely matters, for the two interesting ones it decides
+the valuation. No single rule is right for all five, so: `project_revenue(data, years, base)`
+with `"median"` as the default, the choice reported in the output the way `effective_tax_rate`
+reports Median vs. Fallback, and the per-company deviation written down here as a judgment
+call. Phase 3's sensitivity table is where this uncertainty gets shown, not resolved.
+
+**2. The EBIT margin is flat from year one.** Boeing actually earned 4.79% in 2025 and the
+driver is 6.98%, so the model books the entire turnaround in the first projected year and then
+holds it forever. Apple is harmless here (31.97% actual vs. 28.81% driver), Boeing is not.
+The margin needs the same treatment as growth: fade from the last actual margin to the driver
+over some part of the horizon.
+
+**3. Reinvestment is inconsistent in the terminal year.** CapEx and D&A currently inherit the
+horizon driver ratios into perpetuity, but in steady state reinvestment is pinned by
+`reinvestment rate = g / ROIC`. A company growing at 2.5% forever cannot keep spending 3.04%
+of revenue on CapEx just because it did during the growth phase. This one changes the terminal
+value directly and therefore most of the valuation.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
