@@ -1,6 +1,7 @@
-from database import get_data
+from database import get_data, get_prices
 from model import MIN_YEARS
 import statistics as stats
+import math
 from validation import OUTLIER_RULES
 
 def cost_of_debt(data: dict, start_year: int = 2023) -> dict:
@@ -27,9 +28,35 @@ def cost_of_debt(data: dict, start_year: int = 2023) -> dict:
         value.update({"Cost_of_Debt": None, "n": len(costs), "Source": "Insufficient"})
     return value
 
+def raw_beta(symbol: str, freq: str, n: int) -> dict:
+    value = {"Beta": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": freq}
+    
+    stock = get_prices(symbol, freq, n)
+    market = get_prices("market", freq, n)
+    
+    if False in [stock[i][0] == market[i][0] for i in range(len(stock))]: raise ValueError("Stock and market must have the same date")
+
+    market_returns = [((market[i][1] / market[i-1][1]) - 1) for i in range(1, len(market))]
+    stock_returns = [((stock[i][1] / stock[i-1][1]) - 1) for i in range(1, len(stock))]
+    
+    slope, intercept = stats.linear_regression(market_returns, stock_returns)
+    beta = slope
+    corr = stats.correlation(market_returns, stock_returns)
+    
+    x_mean = stats.mean(market_returns)
+    sum_sq_resid = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(market_returns, stock_returns))
+    sum_sq_x_diff = sum((x - x_mean) ** 2 for x in market_returns)
+    
+    num_returns = len(market_returns)
+    se = math.sqrt(sum_sq_resid / (num_returns - 2) / sum_sq_x_diff)
+        
+    value.update({"Beta": round(beta, 3), "Correlation": round(corr, 3), "Std_Error": round(se, 3), "n": num_returns})
+    return value
+
 def cost_of_equity(beta, rf, erp) -> dict:
     return
 
 if __name__ == "__main__":
     data = get_data("apple", 2016) 
     print(cost_of_debt(data, 2018))
+    print(raw_beta("apple", "1mo", 61))
