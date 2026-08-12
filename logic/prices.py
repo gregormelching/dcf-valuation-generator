@@ -3,7 +3,9 @@ import pandas as pd
 from datetime import datetime
 from database import insert_prices, insert_raw_download
 yf.config.debug.hide_exceptions = False
+import requests as rq
 
+RF_MAX_AGE_DAYS = 10
 SYMBOLS = {
     "apple": "AAPL",
     "boeing": "BA",
@@ -46,7 +48,26 @@ def fetch_prices(symbol: str, freq: str) -> list:
     
     return rows
  
+def risk_free_rate():
+    value = {"Risk_Free_Rate": 0, "Date": "", "Source": "FRED DGS10"}
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10"
+    response = rq.get(url)
+    response.raise_for_status()
+    
+    text = response.text.strip().splitlines()[1:]
+    for row in reversed(text):
+        lst = row.split(",")
+        if lst[1] == "": continue
+        rate = float(lst[1]) / 100
+        date = datetime.strptime(lst[0], "%Y-%m-%d")
+        today = datetime.now()
+        if (today - date).days > RF_MAX_AGE_DAYS: raise ValueError(f"Data from {date.strftime("%Y-%m-%d")} is too old. Please try again later.")
+        value.update({"Risk_Free_Rate": rate, "Date": date.strftime("%Y-%m-%d")})
+
+        
+        break
+    
+    return value
+ 
 if __name__ == "__main__":
-    for s in SYMBOLS:
-        for f in FREQ:
-            fetch_prices(s, f)
+    print(risk_free_rate())
