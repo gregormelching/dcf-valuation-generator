@@ -1,8 +1,9 @@
 from database import get_data, get_prices
-from model import MIN_YEARS
+from model import MIN_YEARS, MARGINAL_TAX_RATE
 import statistics as stats
 import math
 from validation import OUTLIER_RULES
+from prices import N_MONTHS
 
 def cost_of_debt(data: dict, start_year: int = 2023) -> dict:
     value = {"Cost_of_Debt": 0, "n": 0, "Source": ""}
@@ -56,7 +57,39 @@ def raw_beta(symbol: str, freq: str, n: int) -> dict:
 def cost_of_equity(beta, rf, erp) -> dict:
     return
 
+def debt_to_equity(data: dict, symbol: str, year: int | None) -> float: 
+    
+    if year is None: debt_year = max(data)
+    else: debt_year = year
+    if data[debt_year]["Debt"]["Value"] in (0, None) or data[debt_year]["SharesOutstanding"]["Value"] in (0, None): raise ValueError("Missing Debt or SharesOutstanding value")
+    
+    prices = dict(get_prices(symbol, "1mo", N_MONTHS))
+    
+    if year is None: close = list(prices.items())[-1][1]
+    else: close = [i[1] for i in prices.items() if i[0].startswith(f"{year}-12")][-1]
+    
+    market_cap = data[debt_year]["SharesOutstanding"]["Value"] * close
+    
+    return data[debt_year]["Debt"]["Value"] / market_cap
+
+def adjusted_beta(data: dict, symbol: str, freq: str, n: int) -> dict:
+    value = {"Beta": 0, "Beta_Raw": 0, "Beta_Unlevered": 0, "Beta_Relevered": 0, "DE_Window": 0, "DE_Current": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": ""}
+    
+    raw = raw_beta(symbol, freq, n)
+    years = sorted(set([int(year[0].split("-")[0]) for year in get_prices(symbol, freq, n) if year[0].split("-")[1] == "12"]))
+    de_window = stats.mean([debt_to_equity(data, symbol, year) for year in years])
+    de_current = debt_to_equity(data, symbol, None)
+    beta_u = raw["Beta"] / (1 + (1 - MARGINAL_TAX_RATE) * de_window)
+    beta_rel = beta_u * (1 + (1 - MARGINAL_TAX_RATE) * de_current)
+    beta_adj = 0.67 * beta_rel + 0.33
+    
+    value.update({"Beta": beta_adj, "Beta_Raw": raw["Beta"], "Beta_Unlevered": beta_u, "Beta_Relevered": beta_rel, "DE_Window": de_window, "DE_Current": de_current, "n": raw["n"], "Correlation": raw["Correlation"], "Std_Error": raw["Std_Error"], "Source": raw["Source"]})
+    
+    return value
+
 if __name__ == "__main__":
     data = get_data("apple", 2016) 
-    print(cost_of_debt(data, 2018))
-    print(raw_beta("apple", "1mo", 61))
+    #print(cost_of_debt(data, 2018))
+    #print(raw_beta("apple", "1mo", 61))
+    #print(debt_to_equity(data, "apple", 2025))
+    print(adjusted_beta(data, "apple", "1mo", N_MONTHS))

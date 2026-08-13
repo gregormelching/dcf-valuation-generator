@@ -509,7 +509,7 @@ Also found while filtering flags: `flags = data[year][metric]["Flag"]` binds a r
 years carried `outlier` before the call and zero after it. Any later consumer would have seen
 silently cleaned data. Copy via list comprehension.
 
-#### Step 2c — the three modelling decisions left in the projection — OPEN
+#### Step 2c — the three modelling decisions left in the projection — 2c-2 DONE, REST OPEN
 
 The projection runs; what it assumes is not yet decided. In order:
 
@@ -524,11 +524,32 @@ with `"median"` as the default, the choice reported in the output the way `effec
 reports Median vs. Fallback, and the per-company deviation written down here as a judgment
 call. Phase 3's sensitivity table is where this uncertainty gets shown, not resolved.
 
-**2. The EBIT margin is flat from year one.** Boeing actually earned 4.79% in 2025 and the
-driver is 6.98%, so the model books the entire turnaround in the first projected year and then
-holds it forever. Apple is harmless here (31.97% actual vs. 28.81% driver), Boeing is not.
-The margin needs the same treatment as growth: fade from the last actual margin to the driver
-over some part of the horizon.
+**2. The EBIT margin is flat from year one — DONE.** Boeing actually earned 4.79% in 2025 while
+the driver is 6.98%, so the old version booked the entire turnaround in the first projected
+year and then held it forever. `project_fcf` now fades linearly from the last actual margin to
+the driver over the horizon, same shape as the growth fade:
+`m_t = m_last + (m_driver - m_last) * i/N`. The per-year margin is carried in the output as
+`EBIT_Margin` rather than only implied by `EBIT / Revenue`, so the trajectory is auditable
+without back-computing it.
+
+| | last actual | driver | projected year 1 |
+|---|---|---|---|
+| Apple | 31.97% | 28.81% | 31.65% |
+| Microsoft | 45.62% | 41.59% | 45.22% |
+| P&G | 24.26% | 22.09% | 24.05% |
+| Tesla | 4.59% | 6.32% | 4.77% |
+| Boeing | 4.79% | 6.98% | 5.00% |
+
+Not cosmetic: Apple's first projected FCF moves from 110.75 to 121.31bn (+9.5%), because the
+three high-margin companies were previously marked down to their ten-year median immediately.
+The direction differs by company — Apple, Microsoft and P&G start *above* their driver and
+fade down, Tesla and Boeing start below and fade up. The terminal row keeps the driver margin,
+which is exactly what the fade arrives at in year N, so the two are consistent by construction
+rather than by coincidence.
+
+The guard on the last actual margin raises rather than falling back on the driver. A missing
+last actual year means the anchor for the whole trajectory is unknown, and silently starting
+the fade at the driver would be indistinguishable from the old flat behaviour.
 
 **3. Reinvestment is inconsistent in the terminal year.** CapEx and D&A currently inherit the
 horizon driver ratios into perpetuity, but in steady state reinvestment is pinned by
@@ -617,8 +638,176 @@ monthly 61 rows `2021-07-31` to `2026-07-31`, weekly 105 rows `2024-08-09` to `2
 dividend-adjusted total-return series. Immaterial for beta, but a historical ERP measured
 from it understates by roughly 2pp — `^SP500TR` is the alternative, with shorter history.
 Boeing's 2024 capital raise is in the window; `auto_adjust` correctly does not touch
-dilution, so Boeing's beta partly measures a financing event. `risk_free_rate()` against
-FRED DGS10 is still open, as is the whole of step 3b (beta).
+dilution, so Boeing's beta partly measures a financing event.
+
+**Part 2 — `risk_free_rate()`, also in `prices.py` — DONE.** FRED series DGS10, the keyless
+CSV endpoint, no API key. Returns `{Risk_Free_Rate, Date, Source}`, same shape as
+`effective_tax_rate` and `cost_of_debt`, so a later valuation can be traced back to which
+observation it used. Current reading: 0.0472 as of 2026-08-10.
+
+Four things about that file that are not guessable and cost a debugging round each:
+
+- **Holidays are empty fields, not `"."`.** The premise going in was that FRED writes a dot
+  for non-trading days; measured, it writes nothing at all — 719 empty values out of 16,855
+  observations, e.g. `2025-12-25,`. A guard on `== "."` catches none of them and fails later
+  inside `float('')`, at a place that looks like a network error.
+- **Read the columns by position, not by name.** FRED renamed the header from `DATE` to
+  `observation_date`; it currently reads `observation_date,DGS10`. Indexing by name works
+  until the next rename, and then only in production.
+- **Search backwards, don't take the last line.** The final rows are regularly weekends,
+  holidays or simply not published yet — today the newest observation is 2026-08-10 while the
+  11th and 12th do not exist. Normal publication lag is one to two business days.
+- **FRED delivers percentage points.** `4.72` means 4.72%, and the rest of the model works in
+  decimals. Same class as the step 1 bug where `0.25` and `16.6` shared a field; in CAPM it is
+  a factor of 100 on the discount rate, not a rounding issue.
+
+`RF_MAX_AGE_DAYS = 10` guards staleness, because a frozen series looks exactly like a valid
+rate — without it a valuation six months from now silently uses a six-month-old yield. Ten
+days lets holiday weeks through and still catches a genuinely dead feed. The first version
+compared `datetime.now().day` against `date.day`, i.e. day-of-month against day-of-month,
+which returns a negative number across a month boundary and never fires.
+
+#### Cost of debt (`logic/wacc.py`) — DONE
+
+`cost_of_debt(data, start_year)` returns `{Cost_of_Debt, n, Source}`, computed as
+`InterestExpense / average(Debt_t, Debt_t-1)`, median over the usable years. The average is
+used because interest accrues over the year while debt is a balance-sheet instant — using the
+closing balance alone overstates the rate for a company that borrowed late in the year. The
+flag filter is the same rule-aware one as `driver_ratio`: an `outlier` under a `yoy` rule is
+dropped from consideration because it only means the position grew, while any other flag
+disqualifies the year. Below `MIN_YEARS` it returns `None` with `Source: "Insufficient"`, no
+substitute — same argument as the driver ratios, there is no statutory cost of debt to fall
+back on.
+
+| | from 2018 | n | from 2023 | n |
+|---|---|---|---|---|
+| Apple | 2.71% | 6 | **None** | 1 |
+| Microsoft | 3.84% | 8 | 5.03% | 3 |
+| P&G | 1.63% | 8 | 2.71% | 3 |
+| Tesla | 5.38% | 8 | 4.66% | 3 |
+| Boeing | 4.30% | 8 | 4.73% | 3 |
+
+**The window choice is unresolved and it matters.** A short window (2023+) measures today's
+rate environment, which is what a forward-looking WACC wants; a long one (2018+) averages in
+the zero-rate years and understates the cost of debt by 100-200bp for Microsoft and P&G. But
+the short window breaks Apple outright: interest expense is untaggable from EDGAR for
+2024-2025 (the Step 0 finding — Apple reports interest only inside "Other income/(expense),
+net" from FY2024), so `n = 1` and the function correctly refuses. Options are a longer window
+for Apple only, a synthetic rating-based spread over the risk-free rate à la Damodaran, or
+accepting a stale rate. Decide before assembling WACC, and write down which one, because it
+is a per-company judgment call and not a measurement.
+
+Boeing's figure is additionally overstated: it uses `InterestAndDebtExpense`, which includes
+non-interest financing cost. Known since Step 0, unfixable from EDGAR.
+
+#### Step 3b — beta — DONE
+
+`raw_beta(symbol, freq, n)` in `logic/wacc.py` regresses the symbol's returns on `^GSPC`'s and
+returns `{Beta, n, Correlation, Std_Error, Source}`, where `Source` is the frequency. Both
+series come from `get_prices`, which guarantees the identical date grid by construction; the
+function still asserts it element-wise, because a silent misalignment shifts one series by a
+period and produces a beta that looks entirely normal.
+
+**Measured, five years monthly (60 returns) against two years weekly (104 returns):**
+
+| | beta 1mo | corr | SE | 95% CI (1mo) | beta 1wk | corr |
+|---|---|---|---|---|---|---|
+| Apple | 1.089 | 0.690 | 0.150 | 0.80 – 1.38 | 1.048 | 0.571 |
+| Microsoft | 1.107 | 0.640 | 0.174 | 0.77 – 1.45 | 1.111 | 0.566 |
+| P&G | 0.386 | 0.333 | 0.144 | 0.10 – 0.67 | 0.189 | 0.179 |
+| Tesla | 1.830 | 0.477 | 0.443 | 0.96 – 2.70 | 1.817 | 0.527 |
+| Boeing | 1.212 | 0.538 | 0.249 | 0.72 – 1.70 | 1.483 | 0.616 |
+
+**The standard error is the whole point of the step, and it is uncomfortable.** The CIs are
+not a formality: Tesla's spans 0.96 to 2.70, which at `rf = 4.72%` and a 4.5% ERP is a cost of
+equity between 9.1% and 16.9% — a factor of roughly 2.5 on the discounted value of a long-dated
+cash flow. Reporting beta as a single number without it would present the least certain input
+in the model as if it were measured. `R^2 = corr^2` puts numbers on how much of each stock is
+even explained by the market: Apple 0.48, Microsoft 0.41, Boeing 0.29, Tesla 0.23, P&G 0.11.
+
+**The weekly cross-check does not confirm the monthly estimate; it contradicts it twice.** P&G
+reads 0.386 monthly vs 0.189 weekly, a factor of two, and Boeing 1.212 vs 1.483. Apple,
+Microsoft and Tesla agree within 0.04. The two windows are not the same experiment — the weekly
+series covers two years and the monthly five — so the disagreement is partly a window effect
+and partly noise, and both candidates sit inside the other's confidence interval. The honest
+reading is that P&G's beta is not identified by this method at all (R^2 of 0.11), not that one
+frequency is right. It is a diagnostic, not a tiebreaker.
+
+**Standard error is computed by hand because the stdlib does not have it.**
+`statistics.linear_regression` returns slope and intercept only, so
+`SE = sqrt(SSR / (n - 2) / Sxx)` is written out. The `n - 2` is not cosmetic: two parameters
+are estimated, and using `n` understates the SE by ~2% at n=60 — small here, but wrong in a
+way that always points the same direction.
+
+**Inconsistent with the rest of the module, deliberately noted rather than fixed:**
+`effective_tax_rate`, `driver_ratio` and `cost_of_debt` all signal insufficiency through
+`Source` and return `None`. `raw_beta` has no such path — `get_prices` raises when fewer than
+`n` rows carry `adjusted = 1`, so a thin series surfaces as an exception rather than as a
+value. That is defensible (a beta over 40 months would compute fine and look plausible, the
+same argument that put the guard in `get_prices`), but it means the consumer has to handle two
+different absence conventions in one module.
+
+**Part 2 — the adjustment chain — DONE.** `debt_to_equity(data, symbol, year)` returns gross
+debt over market cap, where `year = None` means "today" (newest monthly close against the
+latest fiscal year) and an explicit year means that year's December close.
+`adjusted_beta(data, symbol, freq, n)` runs raw -> unlevered -> relevered -> Blume and keeps
+every stage plus `DE_Window` and `DE_Current` in the return value.
+
+- **Unlever/relever is a no-op unless the two D/E ratios differ, and that is a real trap.**
+  Verified: unlevering at today's D/E and relevering at today's D/E returns the raw beta to the
+  third decimal for all five companies. The chain only means something if the beta is unlevered
+  at the *average* D/E over the regression window and relevered at *today's*. Measured (gross
+  debt / market cap, calendar year-end closes):
+
+  | | avg D/E 2021-25 | D/E today | raw | unlev | relev | Blume |
+  |---|---|---|---|---|---|---|
+  | Apple | 0.038 | 0.021 | 1.089 | 1.059 | 1.076 | 1.051 |
+  | Microsoft | 0.020 | 0.012 | 1.107 | 1.091 | 1.101 | 1.068 |
+  | P&G | 0.092 | 0.097 | 0.386 | 0.361 | 0.387 | 0.590 |
+  | Tesla | 0.005 | 0.007 | 1.830 | 1.823 | 1.833 | 1.558 |
+  | Boeing | 0.453 | 0.378 | 1.212 | 0.905 | 1.161 | 1.108 |
+
+  Four of five move by less than 0.02, i.e. inside a tenth of their own standard error. Only
+  Boeing moves materially (1.212 to 1.161, -4.2%), which is exactly the company whose capital
+  structure changed in the window — the 2024 capital raise. So the chain earns its complexity
+  on one company out of five. **Decided: carried for all**, because the alternative is asserting
+  a stable capital structure, which is exactly the assumption Boeing violates and the one a
+  future leveraged company would violate harder.
+- **Blume dominates everything the relevering does, and it does the most damage where the
+  estimate is weakest.** P&G goes 0.387 to 0.590, +52%, on a regression with an R^2 of 0.11.
+  Tesla goes 1.833 to 1.558, -15%. The shrink toward 1.0 is defensible precisely because those
+  estimates are noisy, but it is an assumption about mean reversion, not a measurement, and it
+  moves the valuation more than the leverage adjustment does.
+- **Market cap rests on an approximation that has to be recorded.** The only equity count is
+  `SharesOutstanding` from EDGAR — a weighted average of diluted shares over the fiscal year —
+  multiplied by a spot close. For Apple, with continuous buybacks, that is a 2-3% error on
+  market cap. It barely propagates at D/E ratios of 0.02, but it is the same number that will
+  later divide equity value into a per-share figure, where it matters directly.
+- **Which tax rate unlevers — decided: `MARGINAL_TAX_RATE`.** The Hamada relation assumes the
+  marginal rate; Apple's 15.8% effective rate would understate the tax shield. At these D/E
+  levels the choice is worth <0.01 of beta for everyone except Boeing.
+- **The D/E series above uses calendar year-end closes against fiscal-year debt.** Correct only
+  for Boeing and Tesla; Apple's fiscal year ends in September, Microsoft's and P&G's in June.
+  Immaterial at the current ratios, but it is a mismatch and would not stay immaterial for a
+  leveraged company. `debt_to_equity` also always reads the monthly grid regardless of the
+  `freq` the beta was measured on — deliberate, since the December closes it needs exist there
+  for every window and an annual balance sheet does not need a weekly price.
+
+**Two bugs from this step, both invisible on the frequency actually being tested:**
+- The window years were derived with `"12" in date`, a substring test against the full date
+  string. It survives on `"1mo"` by accident — month-end labels fall on days 28-31, so "12"
+  can only ever be the month — and breaks on `"1wk"`, where `2024-03-12` matches. Same family
+  as every other "reads correctly in English, evaluates to something else" guard in this file.
+- Even after fixing the match, the weekly path produced `[2024, 2024, 2024, 2024, 2025, 2025,
+  2025, 2025]`: December has four to five Fridays, so each one contributed a window year and
+  the mean silently weighted years by how many Fridays they happened to contain. Invisible
+  monthly (exactly one December per year), and invisible weekly whenever the counts happen to
+  match. Fixed with `sorted(set(...))`.
+
+**Not yet started:** the equity risk premium. `cost_of_equity(beta, rf, erp)` exists as a stub
+only. No source is fixed — the roadmap's note that a historical ERP off `^GSPC` understates by
+roughly 2pp (price index, no dividends) is the only thing decided so far, and it is a reason to
+reject that route rather than a chosen method.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
