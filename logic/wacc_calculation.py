@@ -104,7 +104,7 @@ def cost_of_equity(beta: dict, rf: dict, erp: float = EQUITY_RISK_PREMIUM) -> di
     
     return value
 
-def wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM) -> dict:
+def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM) -> dict:
     value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": ""}
     
     rf = risk_free_rate()
@@ -136,4 +136,4 @@ if __name__ == "__main__":
     beta = adjusted_beta(data, "apple", "1mo", N_MONTHS)
     rf = risk_free_rate()
     #print(cost_of_equity(beta, rf, EQUITY_RISK_PREMIUM))
-    print(wacc(data, "apple", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM))
+    print(calc_wacc(data, "apple", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM))

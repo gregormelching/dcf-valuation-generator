@@ -85,14 +85,15 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") ->
     
     return value
 
-def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median") -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
-    value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0, "EBIT_Margin": ""} for year in range(last_year + 1, last_year + 2 + years)}
+    value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0, "EBIT_Margin": "", "Reinvestment": 0, "Reinvestment_Rate": 0, "Terminal_ROIC": 0} for year in range(last_year + 1, last_year + 2 + years)}
     EBIT_MARGIN = driver_ratio(data, "OperatingIncome")["Driver_Ratio"]
     D_AND_A_MARGIN = driver_ratio(data, "D&A")["Driver_Ratio"]
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")["Driver_Ratio"]
     DNWC_MARGIN = driver_ratio(data, "WorkingCapital")["Driver_Ratio"]
+    if terminal_roic <= TERMINAL_GROWTH: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, DNWC_MARGIN]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
     rev = project_revenue(data, years, base)
@@ -117,13 +118,16 @@ def project_fcf(data: dict, years: int, base: str = "Growth_Rate_Median") -> dic
             t = MARGINAL_TAX_RATE   
             ebit = cur_rev * EBIT_MARGIN
             nopat = ebit * (1 - t)
-            da = cur_rev * D_AND_A_MARGIN
-            capex = cur_rev * CAP_EX_MARGIN
-            dnwc = cur_rev * DNWC_MARGIN
-            fcf = nopat + da - capex - dnwc     
-            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN})
+            da = None
+            capex = None
+            dnwc = None
+            reinvestment_rate = TERMINAL_GROWTH / terminal_roic
+            reinvestment = nopat * reinvestment_rate
+            fcf = nopat - reinvestment
+            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic})
     
     return value
     
 if __name__ == "__main__":
-    print(project_fcf(get_data("apple", 2016), 10))
+    data = get_data("apple", 2016)
+    print(project_fcf(data, 10, 0.0903))

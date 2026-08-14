@@ -667,7 +667,7 @@ days lets holiday weeks through and still catches a genuinely dead feed. The fir
 compared `datetime.now().day` against `date.day`, i.e. day-of-month against day-of-month,
 which returns a negative number across a month boundary and never fires.
 
-#### Cost of debt (`logic/wacc.py`) — DONE
+#### Cost of debt (`logic/wacc_calculation.py`) — DONE
 
 `cost_of_debt(data, start_year)` returns `{Cost_of_Debt, n, Source}`, computed as
 `InterestExpense / average(Debt_t, Debt_t-1)`, median over the usable years. The average is
@@ -702,7 +702,7 @@ non-interest financing cost. Known since Step 0, unfixable from EDGAR.
 
 #### Step 3b — beta — DONE
 
-`raw_beta(symbol, freq, n)` in `logic/wacc.py` regresses the symbol's returns on `^GSPC`'s and
+`raw_beta(symbol, freq, n)` in `logic/wacc_calculation.py` regresses the symbol's returns on `^GSPC`'s and
 returns `{Beta, n, Correlation, Std_Error, Source}`, where `Source` is the frequency. Both
 series come from `get_prices`, which guarantees the identical date grid by construction; the
 function still asserts it element-wise, because a silent misalignment shifts one series by a
@@ -806,9 +806,15 @@ every stage plus `DE_Window` and `DE_Current` in the return value.
 
 #### Step 3c — cost of equity and WACC — DONE
 
-`cost_of_equity(beta, rf, erp)` and `wacc(data, symbol, freq, n, erp)` in `logic/wacc.py`. Both
-take the *dicts* of the upstream functions rather than bare floats, so `Source`, `n` and
-`Std_Error` propagate instead of being re-derived at the call site.
+`cost_of_equity(beta, rf, erp)` and `calc_wacc(data, symbol, freq, n, erp)` in
+`logic/wacc_calculation.py`. Both take the *dicts* of the upstream functions rather than bare
+floats, so `Source`, `n` and `Std_Error` propagate instead of being re-derived at the call site.
+
+The module was split off under its own name rather than `wacc.py` so the module and the function
+inside it do not share an identifier. `model.py` deliberately does **not** import from it: the
+FCF series must not depend on the discount rate, which is why `project_fcf` takes `terminal_roic`
+as a required parameter (step 2c-3) instead of computing it. The dependency runs
+`wacc_calculation → model` only; wiring both together is the job of the step 4 module.
 
 Measured at `rf = 4.68%` (DGS10, 2026-08-12), `EQUITY_RISK_PREMIUM = 0.0428`, monthly beta over
 61 closes, `MARGINAL_TAX_RATE = 0.25`:
