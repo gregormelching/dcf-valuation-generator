@@ -3,9 +3,13 @@ from model import MIN_YEARS, MARGINAL_TAX_RATE
 import statistics as stats
 import math
 from validation import OUTLIER_RULES
-from prices import N_MONTHS
+from prices import N_MONTHS, risk_free_rate
 
-def cost_of_debt(data: dict, start_year: int = 2023) -> dict:
+EQUITY_RISK_PREMIUM = 0.0428
+COD_START_YEAR = 2023
+COD_FALLBACK_START_YEAR = 2018
+
+def cost_of_debt(data: dict, start_year: int = COD_START_YEAR) -> dict:
     value = {"Cost_of_Debt": 0, "n": 0, "Source": ""}
     costs = []
     
@@ -54,9 +58,6 @@ def raw_beta(symbol: str, freq: str, n: int) -> dict:
     value.update({"Beta": round(beta, 3), "Correlation": round(corr, 3), "Std_Error": round(se, 3), "n": num_returns})
     return value
 
-def cost_of_equity(beta, rf, erp) -> dict:
-    return
-
 def debt_to_equity(data: dict, symbol: str, year: int | None) -> float: 
     
     if year is None: debt_year = max(data)
@@ -87,9 +88,52 @@ def adjusted_beta(data: dict, symbol: str, freq: str, n: int) -> dict:
     
     return value
 
+def cost_of_equity(beta: dict, rf: dict, erp: float = EQUITY_RISK_PREMIUM) -> dict:
+    
+    if beta["Beta"] is None or rf["Risk_Free_Rate"] is None: raise ValueError("Beta or RFR not a valid value.")
+    
+    value = {"Cost_of_Equity": 0, "Beta": 0, "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "CI_Low": 0, "CI_High": 0, "Source": beta["Source"], "Std_Error_adj": 0}
+    
+    capm = rf["Risk_Free_Rate"] + beta["Beta"] * erp
+    k = 0.67 * (1 + (1 - MARGINAL_TAX_RATE) * beta["DE_Current"]) / (1 + (1 - MARGINAL_TAX_RATE) * beta["DE_Window"])
+    std_error_adj = k * beta["Std_Error"]
+    ci_low = rf["Risk_Free_Rate"] + (beta["Beta"] - 1.96 * std_error_adj) * erp
+    ci_high = rf["Risk_Free_Rate"] + (beta["Beta"] + 1.96 * std_error_adj) * erp
+    
+    value.update({"Cost_of_Equity": capm, "CI_Low": ci_low, "CI_High": ci_high, "Beta": beta["Beta"], "Std_Error_adj": std_error_adj})
+    
+    return value
+
+def wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM) -> dict:
+    value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": ""}
+    
+    rf = risk_free_rate()
+    beta = adjusted_beta(data, symbol, freq, n)
+    cost_equity = cost_of_equity(beta, rf, erp)
+    cost_debt = cost_of_debt(data, COD_START_YEAR)
+    cod_source = COD_START_YEAR
+    if cost_debt["Source"] == "Insufficient": 
+        cost_debt = cost_of_debt(data, COD_FALLBACK_START_YEAR)
+        cod_source = COD_FALLBACK_START_YEAR
+    if cost_debt["Source"] == "Insufficient": raise ValueError("Insufficient Data")
+    de = debt_to_equity(data, symbol, None)
+    weight_equity = 1 / (1 + de)
+    weight_debt = de / (1 + de)
+    after_tax_debt = cost_debt["Cost_of_Debt"] * (1 - MARGINAL_TAX_RATE)
+    wacc_low = weight_equity * cost_equity["CI_Low"] + weight_debt * after_tax_debt
+    wacc_high = weight_equity * cost_equity["CI_High"] + weight_debt * after_tax_debt
+    wacc = weight_equity * cost_equity["Cost_of_Equity"] + weight_debt * after_tax_debt
+    
+    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source)})
+        
+    return value
+
 if __name__ == "__main__":
     data = get_data("apple", 2016) 
     #print(cost_of_debt(data, 2018))
     #print(raw_beta("apple", "1mo", 61))
     #print(debt_to_equity(data, "apple", 2025))
-    print(adjusted_beta(data, "apple", "1mo", N_MONTHS))
+    beta = adjusted_beta(data, "apple", "1mo", N_MONTHS)
+    rf = risk_free_rate()
+    #print(cost_of_equity(beta, rf, EQUITY_RISK_PREMIUM))
+    print(wacc(data, "apple", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM))

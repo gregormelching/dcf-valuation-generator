@@ -804,10 +804,93 @@ every stage plus `DE_Window` and `DE_Current` in the return value.
   monthly (exactly one December per year), and invisible weekly whenever the counts happen to
   match. Fixed with `sorted(set(...))`.
 
-**Not yet started:** the equity risk premium. `cost_of_equity(beta, rf, erp)` exists as a stub
-only. No source is fixed — the roadmap's note that a historical ERP off `^GSPC` understates by
-roughly 2pp (price index, no dividends) is the only thing decided so far, and it is a reason to
-reject that route rather than a chosen method.
+#### Step 3c — cost of equity and WACC — DONE
+
+`cost_of_equity(beta, rf, erp)` and `wacc(data, symbol, freq, n, erp)` in `logic/wacc.py`. Both
+take the *dicts* of the upstream functions rather than bare floats, so `Source`, `n` and
+`Std_Error` propagate instead of being re-derived at the call site.
+
+Measured at `rf = 4.68%` (DGS10, 2026-08-12), `EQUITY_RISK_PREMIUM = 0.0428`, monthly beta over
+61 closes, `MARGINAL_TAX_RATE = 0.25`:
+
+| | β_adj | Cost of equity | 95% CI |
+|---|---|---|---|
+| Apple | 1.051 | 9.18% | 8.34 – 10.01% |
+| Microsoft | 1.068 | 9.25% | 8.28 – 10.22% |
+| P&G | 0.590 | 7.20% | 6.39 – 8.02% |
+| Tesla | 1.558 | 11.35% | 8.86 – 13.84% |
+| Boeing | 1.108 | 9.42% | 8.08 – 10.76% |
+
+| | W_e | W_d | Kd | Kd after tax | COD window | **WACC** | 95% CI |
+|---|---|---|---|---|---|---|---|
+| Apple | 97.91% | 2.09% | 2.71% | 2.03% | 2018 | **9.03%** | 8.21 – 9.84% |
+| Microsoft | 98.77% | 1.23% | 5.03% | 3.77% | 2023 | **9.18%** | 8.22 – 10.14% |
+| P&G | 91.13% | 8.87% | 2.71% | 2.03% | 2023 | **6.74%** | 6.00 – 7.49% |
+| Tesla | 99.26% | 0.74% | 4.66% | 3.49% | 2023 | **11.29%** | 8.82 – 13.77% |
+| Boeing | 72.56% | 27.44% | 4.73% | 3.55% | 2023 | **7.81%** | 6.84 – 8.78% |
+
+**The ERP is a constant, and that is the honest option rather than a shortcut.**
+`EQUITY_RISK_PREMIUM = 0.0428` is Damodaran's implied ERP for the US
+(pages.stern.nyu.edu/~adamodar/), pulled 2026-08-14. Two alternatives rejected:
+
+- *Historical excess return over the existing 7-year price window.* Seven years of realised
+  excess return over 2019-2026 prints double digits — that is a bull market, not a premium. A
+  historical ERP needs 50+ years of history and still carries a standard error around 2pp. The
+  `^GSPC` variant was already rejected in step 3a for being a price index without dividends.
+- *Computing the implied ERP ourselves.* Requires aggregate S&P 500 dividends plus buybacks and
+  a growth estimate. Neither EDGAR nor yfinance delivers that cleanly. Phase 7 at the earliest.
+
+Sensitivity: `d(WACC)/d(ERP) ≈ W_e × β`, so roughly 1.0 for Apple and Microsoft, 1.55 for Tesla,
+0.80 for Boeing, 0.54 for P&G. A 50bp error in the ERP moves Apple's WACC by 49bp — an order of
+magnitude more than the cost-of-debt window decision below is worth.
+
+**The cost-of-debt window question from the previous section is decided, and it turned out to be
+nearly irrelevant.** `COD_START_YEAR = 2023` with `COD_FALLBACK_START_YEAR = 2018` when the short
+window returns `Insufficient`. Only Apple falls back — interest expense is untaggable from
+FY2024, the step 0 finding. Measured against using 2018 for everyone: Microsoft -1bp, Tesla +1bp,
+P&G -7bp, Boeing -9bp. At equity weights of 73-99% the debt leg simply cannot move the result.
+Worth writing down because the reasoning does not survive a leveraged company — same shape as the
+argument that kept the unlever/relever chain in step 3b. `COD_Source` carries the window that
+actually applied, so Apple's zero-rate-era figure stays visible instead of blending in.
+
+**Weights on gross debt and market cap, never net debt.** Cash is added back in the equity
+bridge; netting it in the weights counts it twice. Harder still: Apple, Microsoft and Tesla are
+net cash, so a net-debt weight would go negative and the WACC formula would stop meaning
+anything. Book debt stands in for the market value of debt — acceptable near par, wrong for
+Boeing (see below).
+
+**`(1 - t)` uses `MARGINAL_TAX_RATE`, matching the Hamada unlevering in step 3b.** Apple's 15.8%
+effective rate would put two different tax rates on the same deductibility inside one model, and
+would set the after-tax cost of debt 0.24pp too high.
+
+**The beta confidence interval propagates through to `WACC_Low`/`WACC_High`.** The standard error
+belongs to the *raw* beta, but the adjustment chain is affine in it —
+`β_adj = k·β_raw + 0.33` with `k = 0.67·(1+(1-t)·DE_Current)/(1+(1-t)·DE_Window)` — so the error
+scales by `k` and the Blume intercept carries none of it. Applying `k` twice, which the first
+version did, narrows Apple's band from 8.34-10.01% to 8.63-9.73%, a third of its width, in the
+direction that makes the model look more certain than it is. Only the equity leg gets a band: the
+cost of debt is a median of measured values, not a regression estimate, and giving it an interval
+would invent uncertainty that was never measured.
+
+**Boeing at 7.81% is wrong and the model cannot see it.** Consensus runs 9-10%. Three causes,
+none fixable from EDGAR: beta 1.108 out of a regression with R² = 0.29; cost of debt from accrued
+interest expense rather than today's marginal borrowing rate, on an issuer whose bonds trade
+below par; and a 27% debt weight built on book debt, which mechanically drags the average down.
+Expect this to surface in Phase 5 as an overvaluation — it is an input problem, not a discounting
+bug, so do not go looking in the DCF mechanics.
+
+**P&G at 6.74% is the weakest number in the model.** Its cost of equity rests on beta 0.590,
+which is Blume shrinkage applied to a regression with R² = 0.11. The raw beta of 0.386 would give
+6.33% cost of equity and a 5.95% WACC. The shrinkage is defensible precisely because the estimate
+is noisy, but it is an assumption doing more work than the measurement underneath it.
+
+**Two bugs from this step, both of the type-drift kind:**
+- The `erp` parameter of `wacc` was accepted and then ignored in favour of the module constant.
+  Nothing raised; a scenario ERP silently produced the base case. That is exactly the failure
+  that flattens Phase 3's sensitivity axis while every cell still looks like a real number.
+- A refactor left `cost_debt` bound to a dict on one branch and to a float on the other. It
+  crashed on all five companies but at two different lines, so the first traceback pointed at the
+  fallback path rather than at the type.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
