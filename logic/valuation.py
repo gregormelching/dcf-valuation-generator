@@ -1,0 +1,59 @@
+from model import project_fcf, TERMINAL_GROWTH
+from wacc_calculation import calc_wacc, N_MONTHS
+from database import get_data
+
+def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
+    last_explicit = sorted(fcf)[-2]
+    tv_row = sorted(fcf)[-1]
+    
+    if wacc <= TERMINAL_GROWTH: raise ValueError("WACC must be greater than Terminal Growth.")
+
+    gordon_tv = fcf[tv_row]["FCF"] / (wacc - TERMINAL_GROWTH)
+    ebitda = fcf[last_explicit]["EBIT"] + fcf[last_explicit]["D&A"]
+    
+    if method == "gordon":
+        tv = gordon_tv
+        source = {"Terminal_Growth": TERMINAL_GROWTH}
+    elif method == "multiple":
+        if exit_multiple is None: raise ValueError("Exit Multiple must be provided.")
+        tv = ebitda * exit_multiple
+        source = {"Multiple": exit_multiple}
+    else: raise ValueError("Invalid method.")
+    
+    return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
+    
+
+def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = "Growth_Rate_Median", method: str = "gordon", exit_multiple: float | None = None) -> dict:
+    value = {}
+    data = get_data(symbol, start_year)
+    wacc_calc = calc_wacc(data, symbol, freq, n)
+    wacc = wacc_calc["WACC"]
+    wacc_low = wacc_calc["WACC_Low"]
+    wacc_high = wacc_calc["WACC_High"]
+    waccs = [("wacc_low", wacc_low), ("wacc", wacc), ("wacc_high", wacc_high)]
+    wacc_source = wacc_calc["Source"]
+            
+    for w in waccs:
+        terminal_roic = w[1]
+        fcf = project_fcf(data, years, terminal_roic, base)
+        PV_Explicit = 0
+        last_year = max(data)
+        
+        for i, row in enumerate(sorted(fcf)[:-1], start = 1):
+            d_factor = (1 + w[1]) ** i
+            d_fcf = fcf[row]["FCF"] / d_factor
+            PV_Explicit += d_fcf
+        tv = terminal_value(fcf, w[1], method, exit_multiple)
+        PV_tv = tv["Terminal_Value"] / ((1 + w[1]) ** years)
+        ev = PV_Explicit + PV_tv
+        if data[last_year]["Debt"]["Value"] in (0, None) or data[last_year]["Cash"]["Value"] in (0, None) or data[last_year]["SharesOutstanding"]["Value"] in (0, None): raise ValueError("Debt, Cash and SharesOutstanding can't equal zero or None.")
+        equity = ev - data[last_year]["Debt"]["Value"] + data[last_year]["Cash"]["Value"]
+        value_per_share = equity / data[last_year]["SharesOutstanding"]["Value"]
+        tv_share = PV_tv / ev
+
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Terminal_ROIC": w[1], "TV_Share": tv_share, "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}"}
+        
+    return value
+
+if __name__ == "__main__": 
+    print(dcf_value("apple", 2016, 10, "1mo", N_MONTHS, "Growth_Rate_Median", "gordon", None))
