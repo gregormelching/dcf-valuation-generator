@@ -509,7 +509,7 @@ Also found while filtering flags: `flags = data[year][metric]["Flag"]` binds a r
 years carried `outlier` before the call and zero after it. Any later consumer would have seen
 silently cleaned data. Copy via list comprehension.
 
-#### Step 2c — the three modelling decisions left in the projection — 2c-2 DONE, REST OPEN
+#### Step 2c — the three modelling decisions left in the projection — 2c-2 and 2c-3 DONE, 2c-1 OPEN
 
 The projection runs; what it assumes is not yet decided. In order:
 
@@ -551,11 +551,22 @@ The guard on the last actual margin raises rather than falling back on the drive
 last actual year means the anchor for the whole trajectory is unknown, and silently starting
 the fade at the driver would be indistinguishable from the old flat behaviour.
 
-**3. Reinvestment is inconsistent in the terminal year.** CapEx and D&A currently inherit the
-horizon driver ratios into perpetuity, but in steady state reinvestment is pinned by
-`reinvestment rate = g / ROIC`. A company growing at 2.5% forever cannot keep spending 3.04%
-of revenue on CapEx just because it did during the growth phase. This one changes the terminal
-value directly and therefore most of the valuation.
+**3. Terminal reinvestment is pinned by `g / ROIC` — DONE.** CapEx and D&A used to inherit the
+horizon driver ratios into perpetuity; a company growing at 2.5% forever cannot keep spending
+3.04% of revenue on CapEx just because it did during the growth phase. The TV row now sets
+`Reinvestment_Rate = TERMINAL_GROWTH / terminal_roic` and `FCF = NOPAT - NOPAT × rate`, with
+`D&A`, `CapEx` and `dNWC` left at `None` — in steady state only the net figure is defined, and
+writing a plausible CapEx/D&A pair there would invent two numbers to express one.
+
+`terminal_roic` is a required parameter of `project_fcf`, not computed inside it, so `model.py`
+stays independent of the discount rate (step 3c). `dcf_value` passes the scenario WACC, which
+makes perpetual growth value-neutral and is the conservative default. The guard raises when
+`terminal_roic <= TERMINAL_GROWTH`, because the reinvestment rate would exceed 100% and the FCF
+would flip sign silently.
+
+**This pin is consistent in the terminal year and inconsistent against the explicit period** —
+three of five companies run negative net reinvestment before it. That is the open half, and it
+sits in step 4b rather than here.
 
 #### Step 3a — price data and the risk-free rate — PART 1 DONE
 
@@ -897,6 +908,186 @@ is noisy, but it is an assumption doing more work than the measurement underneat
 - A refactor left `cost_debt` bound to a dict on one branch and to a float on the other. It
   crashed on all five companies but at two different lines, so the first traceback pointed at the
   fallback path rather than at the type.
+
+#### Step 4 — the bridge from projected FCF to value per share — DONE
+
+`terminal_value(fcf, wacc, method, exit_multiple)` and `dcf_value(symbol, start_year, years,
+freq, n, base, method, exit_multiple, as_of)` in `logic/valuation.py`. This is the module step 3c
+anticipated: it is the only place that imports from both `model.py` and `wacc_calculation.py`,
+and the dependency between those two still runs one way only.
+
+**The terminal value is discounted at exponent N, not N+1.** The Gordon formula
+`FCF_{N+1} / (WACC - g)` already produces a value standing as of the *end* of year N, so
+discounting the TV row by its own year index would lose one full year. `project_fcf` returns
+`years + 1` rows and the last one carries `Flag: "TV"`, which is why the explicit loop iterates
+`sorted(fcf)[:-1]` and the TV is handled separately rather than falling out of the same loop.
+
+**`method` offers Gordon and exit multiple, but the implied multiple is always reported.**
+`Implied_Multiple` is computed as `gordon_tv / EBITDA_N` regardless of which method was selected,
+so the Gordon result can be sanity-checked against comparable trading multiples without a second
+run. EBITDA is taken from the *last explicit* year, not the TV row, because the TV row has
+`D&A` set to `None` by construction — the terminal reinvestment is a single netted figure, not
+a CapEx/D&A pair.
+
+**The equity bridge subtracts gross debt and adds cash, never net debt.** This is the same
+argument as the WACC weights in step 3c: the weights are already built on gross debt, so netting
+cash here would count it twice. The guard rejects `0` and `None` for `Debt`, `Cash` and
+`SharesOutstanding` alike — a zero share count is a parser failure, not a company without shares.
+
+**All three WACC scenarios re-project the FCF, they do not merely re-discount it.** Since step
+2c-3 pins `terminal_roic = WACC`, changing the discount rate changes the terminal reinvestment
+rate `g / ROIC` and therefore the terminal FCF. Calling `project_fcf` once outside the loop would
+silently hold the base-case reinvestment while varying only the denominator, which is a different
+and much narrower band than the one reported.
+
+**Four bugs from this step, all mechanical:**
+- The discount loop was nested (`for row: for i in range(1, years)`), applying every exponent to
+  every cashflow — roughly a factor of ten on the explicit period. `range(1, years)` additionally
+  dropped the last year, and an `i += 1` inside the `range` loop was a no-op.
+- `PV_tv` was named as a present value but never divided by `(1 + WACC) ** years`. Apple came out
+  at 1549.50bn instead of 655.76bn, i.e. a year-N value added to year-0 present values.
+- `terminal_value = terminal_value(...)` shadowed the function. Assigning to the name makes it
+  local for the entire function scope, so the read on the right-hand side failed on the *first*
+  iteration with `UnboundLocalError` — the traceback points at the call, not at the shadowing.
+- The `exit_multiple is None` guard sat before the method branch instead of inside the
+  `"multiple"` branch, so the ordinary Gordon call with `exit_multiple=None` raised.
+
+#### Step 4a — mechanical corrections to the bridge — DONE
+
+Phase 5 exists to catch a 40%+ deviation from market and trace it to a cause. The first run did
+that on all five companies at once (-30% to -88%), so the diagnosis was pulled forward. It splits
+cleanly into corrections that are simply errors — this step — and modelling assumptions that need
+a decision, which is step 4b.
+
+Measured cumulatively, value per share at base WACC, `as_of = 2026-08-16`:
+
+| | step 4 | + tax fade | + mid-year | + stub | + dated shares | market | delta |
+|---|---|---|---|---|---|---|---|
+| Apple | 105.51 | 102.33 | 106.73 | 114.98 | **116.80** | 308.64 | -62.2% |
+| Microsoft | 251.20 | 243.68 | 254.16 | 279.57 | **280.78** | 464.72 | -39.6% |
+| P&G | 100.41 | 98.86 | 102.45 | 111.00 | **116.66** | 144.49 | -19.3% |
+| Tesla | 38.34 | 37.79 | 39.30 | 41.30 | **38.86** | 311.21 | -87.5% |
+| Boeing | 71.53 | 71.53 | 75.85 | 81.48 | **78.47** | 216.14 | -63.7% |
+
+**1. The tax rate now fades, and it fades the value down.** `project_fcf` used the effective
+median for the explicit years and switched to `MARGINAL_TAX_RATE` in the TV row — a discontinuity
+of 9.2pp for Apple at exactly the seam that carries 44% of the value. Resolved with
+`t_t = t + (MARGINAL_TAX_RATE - t) * i/N`, the same shape already used for `g_t` and `m_t`, so
+year N arrives at 25.0% and the TV row continues it rather than jumping to it. Apple's path runs
+16.7 → 25.0%. Costs 1.4-3.0%, and Boeing is unaffected because `effective_tax_rate` already falls
+back to the marginal rate there (`Source: "Fallback"`).
+
+The alternative — pulling the effective rate *into* the TV instead — was rejected: it is worth
++2 to +5% but hangs 84% of Apple's value on a 15.8% tax rate holding in perpetuity, against
+Pillar Two and against any plausible IP-regime change. The per-year rate is carried as `Tax_Rate`
+in the output so the trajectory is auditable, same reasoning as `EBIT_Margin` in step 2c-2.
+
+**2. Mid-year convention.** Cashflows arrive across the year, not on the last day of it, so the
+exponent is `i - 0.5` and the TV discount is `years - 0.5`. Worth a uniform +4.3% on all five —
+the factor is `(1+WACC)^0.5` and cancels against the WACC, so any company deviating from +4.3%
+means the TV exponent was missed.
+
+**3. The valuation date is now a parameter, not the last balance sheet date.** The model
+discounted to the fiscal year end, which for Microsoft and P&G is 2025-06-30 — 1.128 years before
+the market price it was being compared against. `as_of` defaults to `datetime.now()` but accepts
+`"%Y-%m-%d"`, because otherwise every verification table written into this file is wrong the day
+after it is written.
+
+| | FYE | stub (years) | compounding factor |
+|---|---|---|---|
+| Apple | 2025-09-27 | 0.884 | 1.0790 |
+| Microsoft | 2025-06-30 | 1.128 | 1.1036 |
+| P&G | 2025-06-30 | 1.128 | 1.0759 |
+| Tesla | 2025-12-31 | 0.624 | 1.0688 |
+| Boeing | 2025-12-31 | 0.624 | 1.0478 |
+
+Implemented as a single factor on EV rather than as `i - 0.5 - stub` in the exponent. The two are
+algebraically identical, but the exponent form goes negative for Microsoft and P&G, and a
+negative exponent is indistinguishable from a sign error when reading the code later. Debt and
+cash are deliberately *not* rolled forward: they are point-in-time figures from the FYE, and the
+cashflows generated since then are already inside `PV_Explicit` — estimating and adding the
+accumulated cash on top would double-count it. Conservative, and standard.
+
+**4. `SharesOutstanding` was a weighted average, and the bridge needs a point-in-time count.**
+`WeightedAverageNumberOfDilutedSharesOutstanding` is the right denominator for EPS and the wrong
+one for an equity bridge. This is the smallest lever of the four and the only one that points
+*down* for two companies:
+
+| | weighted diluted | dated | delta |
+|---|---|---|---|
+| Apple | 15.005 | 14.776 | -1.5% |
+| Microsoft | 7.465 | 7.433 | -0.4% |
+| P&G | 2.454 | 2.342 | -4.6% |
+| Tesla | 3.528 | 3.752 | **+6.4%** |
+| Boeing | 0.762 | 0.785 | **+3.0%** |
+
+**`dei:EntityCommonStockSharesOutstanding` beats the us-gaap alternative on data, not on
+principle.** `us-gaap:CommonStockSharesOutstanding` sits exactly on the balance sheet date, which
+is the theoretically cleaner instant, but it is absent for P&G (only `CommonStockSharesIssued` =
+4.009bn including treasury, against 2.34bn real) and wrong for Boeing (1.012bn, tagged identically
+to Issued, against 0.785bn). Two of five unusable. The dei cover-page figure is clean for all
+five and dated a few weeks *after* FYE, which for a valuation as of today is closer, not further.
+
+**Two structural obstacles in `parser.py`, both worth knowing before touching that function
+again.** First, `get_values` iterates `for sec_layer in sec_layers` as the outermost loop with
+`sec_layers = ["us-gaap", "dei"]`, and the update condition `slot["Tag"] == tag` prevents any
+other tag from taking a slot that is already filled. A dei tag appended to an existing tag list
+is therefore *unreachable* — it needs its own slot, which is why `SharesDated` exists and
+`select_shares` sits in `SLOT_SELECTORS`. Second, the year filter runs on the fact end date, and
+Tesla's and Boeing's cover pages for FY2025 are dated 2026-01-23, which lands outside the data
+window entirely. That one slot keys on `entry["fy"]` instead; this is admissible only because
+fact and filing belong to the same 10-K, and it would be wrong globally — for us-gaap comparative
+periods `fy` is the filing year, not the fact year.
+
+**Three bugs from this step:**
+- The `fy` switch was applied to the filter but not to the write, leaving `values[end.year]` two
+  lines below. Filtering on one key and writing on another produced `KeyError: 2026`.
+- `select_shares` returned `["SharesOutstanding"]` unconditionally when `SharesDated` was empty,
+  including for pre-2010 years where neither slot is filled. `clean_values` then dereferenced
+  `slots[s]["Value"]` on an empty dict. The other selectors all have an empty-list third case;
+  this one needed the same.
+- Before that, `select_shares` was written but never registered in `SLOT_SELECTORS`. With two
+  slots the `elif len(...) == 1` branch in `clean_values` no longer fires, the metric is never
+  flattened, `validate_values` flags every year as `missing`, and `insert_data` writes `None` for
+  all five companies and all years. The failure surfaced three call levels away in
+  `debt_to_equity`, not in the parser.
+
+**What is left is not a discounting error.** A reverse DCF — solving for the constant revenue
+growth that reproduces today's price, everything else held at the measured values — puts the
+market's implied assumption at 20.2% for Apple (measured median 6.30%), 17.5% for Microsoft
+(14.28%), 15.0% for Boeing (6.94%) and 49.3% for Tesla (28.31%). P&G needs 7.2% against 2.48%,
+which is why it is the one case that nearly closes. Tesla at -87.5% is the model's output, not
+its defect: 49% growth for a decade at a 6.3% EBIT margin is not an assumption anyone should
+write down. The remaining structural gap belongs to step 4b, and tuning WACC, growth or the
+terminal multiple until the market price falls out is explicitly rejected — it would discard the
+only statement a DCF makes.
+
+#### Step 4b — terminal ROIC and the growth base — OPEN
+
+Two items, in this order:
+
+**1. The terminal ROIC pin is internally inconsistent.** Step 2c-3 set `terminal_roic = WACC`,
+which makes perpetual growth value-neutral and is defensible on its own. But the explicit period
+runs *negative* net reinvestment for Apple (-0.86% of revenue), P&G (-0.45%) and Boeing (-0.78%)
+— `D&A` exceeds `CapEx + dNWC`, which implies infinite return on new capital — and then snaps to
+WACC in the terminal year. FCF drops at the seam by 36% for Apple, 41% for P&G, 40% for Boeing,
+25% for Microsoft. Measured effect of decoupling: at a flat 25% terminal ROIC, P&G moves +25 and
+Boeing +19 per share. The clean fix is a measured `NOPAT / Invested Capital` faded to a target,
+which needs `StockholdersEquity` as a new parser metric (Invested Capital = Debt + Equity - Cash).
+
+**2. Step 2c-1 is still open and now blocks two companies.** Re-measured after step 4a, value per
+share at base WACC:
+
+| | median | Mean_Last_Three | mean |
+|---|---|---|---|
+| Apple | 116.80 | 100.20 | 124.02 |
+| Microsoft | 280.78 | 264.34 | 272.85 |
+| P&G | 116.66 | 112.88 | 118.68 |
+| Tesla | 38.86 | 22.79 | 48.53 |
+| Boeing | 78.47 | **104.28** | 55.26 |
+
+For the stable three the choice moves the result by 3-15%; Boeing spans a factor of 1.89 and
+Tesla 2.13 across the same three bases. It cannot stay a global default.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)

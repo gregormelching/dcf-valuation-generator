@@ -12,6 +12,7 @@ OUTLIER_RULES = {
     "InterestExpense":      ("yoy", 0.5),
     "Debt":                 ("yoy", 0.5),
     "Cash":                 ("yoy", 0.5),
+    "SharesDated":          ("yoy", 0.1)
 }
 
 RECON_TOLERANCE = 0.03

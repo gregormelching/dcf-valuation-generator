@@ -42,6 +42,9 @@ SHARES_OUTSTANDING_TAGS = {
     "SharesOutstanding": [
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
+    ],
+    "SharesDated": [
+        "EntityCommonStockSharesOutstanding",
     ]
 }
 WORKING_CAPITAL_TAGS = {
@@ -153,12 +156,18 @@ def select_deferred_taxes(slots):
     if slots["Fed"] and slots["For"] and slots["St"]: return ["Fed", "For", "St"]
     return []
 
+def select_shares(slots):
+    if slots["SharesDated"]: return ["SharesDated"]
+    if slots["SharesOutstanding"]: return ["SharesOutstanding"]
+    return []
+    
 SLOT_SELECTORS = {
     "WorkingCapital": select_wc,
     "Cash": select_cash,
     "Debt": select_debt,
     "PretaxIncome": select_pretax,
-    "DeferredTaxes": select_deferred_taxes
+    "DeferredTaxes": select_deferred_taxes,
+    "SharesOutstanding": select_shares
 }
 
 def get_response(cik):
@@ -205,13 +214,15 @@ def get_values(n: int, company: str, metric_tags: dict) -> dict:
                                             is_yearly = (end - start).days > 350
                                         
                                         else: 
-                                            is_yearly = True        
-                                        
-                                        if end.year not in years or entry["form"] != "10-K": continue
-                                        slot = values[end.year][metric_name][slot_name]
+                                            is_yearly = True     
+                                               
+                                        if slot_name == "SharesDated": endyear = entry.get("fy")
+                                        else: endyear = end.year
+                                        if endyear not in years or entry["form"] != "10-K": continue
+                                        slot = values[endyear][metric_name][slot_name]
 
                                         if is_yearly and (not slot or (slot["Tag"] == tag and entry["filed"] > slot["Filed"])):
-                                                values[end.year][metric_name][slot_name].update({"Value": entry["val"], "Tag": tag, "Form": entry["form"], "End": end.strftime("%Y-%m-%d"), "Filed": entry["filed"]})
+                                                values[endyear][metric_name][slot_name].update({"Value": entry["val"], "Tag": tag, "Form": entry["form"], "End": end.strftime("%Y-%m-%d"), "Filed": entry["filed"]})
     return values
 
 def clean_values(values: dict) -> dict:
