@@ -128,6 +128,43 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     
     return value
     
+def roic(data: dict) -> dict:
+    value = {"ROIC_Median": 0, "ROIC_Last": 0, "IC_Last": 0, "n": 0, "Source": ""}
+    dct = {}
+    t = effective_tax_rate(data)["Effective_Tax_Rate"]
+    roics = []
+    source = "Median"
+    
+    for year in sorted(data):
+        debt = data[year]["Debt"]["Value"]
+        cash = data[year]["Cash"]["Value"]
+        equity = data[year]["Equity"]["Value"]
+        opinc = data[year]["OperatingIncome"]["Value"]
+        vals = [debt, cash, equity, opinc]
+        nos = [None]
+        if any(map(lambda v: v in vals, nos)): continue
+        
+        ic = debt + equity - cash
+        nopat = opinc * (1 - t)
+        dct[year] = {"IC": ic, "NoPat": nopat}
+    
+    for year in dct:
+        if year-1 not in dct.keys(): continue
+        if dct[year-1]["IC"] <= 0:
+            source = "Insufficient"
+            continue
+        roic_t = dct[year]["NoPat"] / dct[year-1]["IC"]
+        roics.append(roic_t)
+    if len(roics) >= MIN_YEARS and source != "Insufficient": 
+        median = stats.median(roics)
+        last = roics[-1]
+    else:
+        median = None
+        last = None
+        
+    value.update({"ROIC_Median": median, "ROIC_Last": last, "IC_Last": dct.get(max(data), {}).get("IC"), "n": len(roics), "Source": source})    
+    return value
+
 if __name__ == "__main__":
     data = get_data("apple", 2016)
-    print(project_fcf(data, 10, 0.0903))
+    print(roic(data))

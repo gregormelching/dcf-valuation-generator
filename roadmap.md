@@ -509,7 +509,7 @@ Also found while filtering flags: `flags = data[year][metric]["Flag"]` binds a r
 years carried `outlier` before the call and zero after it. Any later consumer would have seen
 silently cleaned data. Copy via list comprehension.
 
-#### Step 2c — the three modelling decisions left in the projection — 2c-2 and 2c-3 DONE, 2c-1 OPEN
+#### Step 2c — the three modelling decisions left in the projection — ALL DONE
 
 The projection runs; what it assumes is not yet decided. In order:
 
@@ -523,6 +523,8 @@ the valuation. No single rule is right for all five, so: `project_revenue(data, 
 with `"median"` as the default, the choice reported in the output the way `effective_tax_rate`
 reports Median vs. Fallback, and the per-company deviation written down here as a judgment
 call. Phase 3's sensitivity table is where this uncertainty gets shown, not resolved.
+**Decided in step 4b** — median for Apple, Microsoft and P&G, `Mean_Last_Three` for Tesla and
+Boeing, with the per-company reasoning and the measured spread in that entry.
 
 **2. The EBIT margin is flat from year one — DONE.** Boeing actually earned 4.79% in 2025 while
 the driver is 6.98%, so the old version booked the entire turnaround in the first projected
@@ -1062,32 +1064,122 @@ write down. The remaining structural gap belongs to step 4b, and tuning WACC, gr
 terminal multiple until the market price falls out is explicitly rejected — it would discard the
 only statement a DCF makes.
 
-#### Step 4b — terminal ROIC and the growth base — OPEN
+#### Step 4b — terminal ROIC and the growth base — DONE
 
-Two items, in this order:
+**The plan this step started with was wrong, and measuring it is what showed that.** The previous
+version of this entry called a measured `NOPAT / Invested Capital` the clean fix. It is not. With
+`Equity` added to the parser and `IC = Debt + Equity - Cash&Investments`, `ROIC_t = NOPAT_t /
+IC_{t-1}` over 2016-2025:
 
-**1. The terminal ROIC pin is internally inconsistent.** Step 2c-3 set `terminal_roic = WACC`,
-which makes perpetual growth value-neutral and is defensible on its own. But the explicit period
-runs *negative* net reinvestment for Apple (-0.86% of revenue), P&G (-0.45%) and Boeing (-0.78%)
-— `D&A` exceeds `CapEx + dNWC`, which implies infinite return on new capital — and then snaps to
-WACC in the terminal year. FCF drops at the seam by 36% for Apple, 41% for P&G, 40% for Boeing,
-25% for Microsoft. Measured effect of decoupling: at a flat 25% terminal ROIC, P&G moves +25 and
-Boeing +19 per share. The clean fix is a measured `NOPAT / Invested Capital` faded to a target,
-which needs `StockholdersEquity` as a new parser metric (Invested Capital = Debt + Equity - Cash).
+| | IC 2025 | IC 2016 | ROIC range | median | usable |
+|---|---|---|---|---|---|
+| Apple | 39.97 | **-22.30** | -3716% to +5899% | -311.5% | no |
+| Microsoft | 276.66 | 12.88 | 46.7% to 188.2% | 109.1% | with reservation |
+| P&G | 77.24 | 80.48 | 5.4% to 22.2% | **20.1%** | yes |
+| Tesla | 46.90 | 9.15 | -14.2% to 58.3% | 12.2% | with reservation |
+| Boeing | 37.32 | **0.52** | -110% to +1483% | -9.7% | no |
 
-**2. Step 2c-1 is still open and now blocks two companies.** Re-measured after step 4a, value per
-share at base WACC:
+Apple carries *negative* invested capital in nine of ten years — buybacks pushed equity to ~57bn
+while cash and investments sit above it, so the denominator is negative or near zero and the
+quotient is an artefact, not a return. Boeing starts at 0.52bn IC and goes through the 737 MAX
+years. Two of five unmeasurable, and they are the two with the largest gap to market. The
+distinction matters for Boeing specifically: its denominator is fine from 2019 on, the *numerator*
+is negative — that is a correct measurement of a company that earned nothing for six years, not a
+broken ratio, and it is still useless as a terminal assumption.
 
-| | median | Mean_Last_Three | mean |
-|---|---|---|---|
-| Apple | 116.80 | 100.20 | 124.02 |
-| Microsoft | 280.78 | 264.34 | 272.85 |
-| P&G | 116.66 | 112.88 | 118.68 |
-| Tesla | 38.86 | 22.79 | 48.53 |
-| Boeing | 78.47 | **104.28** | 55.26 |
+**The second finding corrected an error in the step 4a diagnosis.** That entry claimed the
+explicit period implies infinite ROIC. Measured as `ΔNOPAT_t / net reinvestment_{t-1}`:
 
-For the stable three the choice moves the result by 3-15%; Boeing spans a factor of 1.89 and
-Tesla 2.13 across the same three bases. It cannot stay a global default.
+| | net reinv. % revenue | implied ROIC yr 2 | implied ROIC yr 10 | WACC |
+|---|---|---|---|---|
+| Apple | -0.86% | -102% | -4% | 8.98% |
+| Microsoft | +3.63% | 101% | 3% | 9.13% |
+| P&G | -0.45% | -40% | -32% | 6.68% |
+| Tesla | +0.78% | 130% | 28% | 11.23% |
+| Boeing | -0.78% | -51% | -38% | 7.81% |
+
+The explicit phase is not too generous, it is *incoherent*: reinvestment runs as a fixed share of
+revenue while `ΔNOPAT` decays with the growth fade, so the implied return collapses toward year
+10. Microsoft falls from 101% to 3%, below its own WACC. The terminal value at `ROIC = WACC` is
+therefore not the conservative end of the model — by year 10 it is the optimistic one.
+
+**Decision: `terminal_roic` becomes an explicit per-company parameter, and the measured ROIC is
+built as a diagnostic rather than as an input.** `roic(data)` in `model.py` returns
+`ROIC_Median`, `ROIC_Last`, `IC_Last`, `n` and `Source`, and reports `Insufficient` where the
+capital base is not defined. `dcf_value` takes `terminal_roic` with `None` defaulting to the
+scenario WACC, so every number from step 4a stays reproducible, and carries `ROIC_Source`
+(`"WACC"` or `"Assumption"`) into the output.
+
+Two alternatives rejected:
+
+- *Coupling reinvestment to ROIC across the whole projection* (`Reinvestment_t = ΔNOPAT_t /
+  ROIC`). Internally consistent, and it would fix the incoherence above at the root. It also
+  discards the D&A, CapEx and dNWC driver ratios built in step 2a from ten years of filings and
+  replaces three measured quantities with one assumed one. In an interview "my capex ratio is the
+  ten-year median of actuals" survives a follow-up question; "I assumed a return on capital" does
+  not.
+- *Wiring `roic()` directly into `project_fcf`.* Apple and Boeing would hit a `None` path in the
+  middle of the valuation, or a silent fallback. A visibly set number is worse in theory and
+  better in practice than a fallback nobody sees.
+
+Value per share against terminal ROIC, base WACC, `as_of = 2026-08-16`, median growth:
+
+| | ROIC=WACC | 10% | 15% | 20% | 30% | ∞ |
+|---|---|---|---|---|---|---|
+| Apple | 116.80 | 118.78 | 124.55 | 127.44 | 130.33 | 136.11 |
+| Microsoft | 280.78 | 285.18 | 300.63 | 308.35 | 316.08 | 331.52 |
+| P&G | 116.66 | 130.18 | 139.25 | **143.79** | 148.32 | 157.39 |
+| Tesla | 38.86 | 38.30 | 39.97 | 40.81 | 41.64 | 43.31 |
+| Boeing | 78.47 | 84.87 | 92.50 | 96.32 | 100.13 | 107.76 |
+
+**The coupling to WACC was also hiding a second effect in the scenario band.** While
+`terminal_roic = WACC`, the low/base/high band moved the discount rate *and* the terminal
+reinvestment rate at once, which is why Apple's band looked wider than discount-rate uncertainty
+alone justifies. With `terminal_roic` set, the band measures what it claims to measure.
+
+#### Step 2c-1 — the growth base, decided per company — DONE
+
+| | median | Mean_Last_Three | mean | chosen |
+|---|---|---|---|---|
+| Apple | 116.80 | 100.20 | 124.02 | median |
+| Microsoft | 280.78 | 264.34 | 272.85 | median |
+| P&G | 116.66 | 112.88 | 118.68 | median |
+| Tesla | 38.86 | **22.79** | 48.53 | Mean_Last_Three |
+| Boeing | 78.47 | **104.28** | 55.26 | Mean_Last_Three |
+
+Apple, Microsoft and P&G keep the median: the spread across the three bases is 3-15% and none of
+them has a structural break inside the window. Boeing moves to `Mean_Last_Three` because its
+6.94% median is drawn from a window containing the 737 MAX grounding and the pandemic — a median
+across a crisis is not a statement about the normal state. Tesla moves to `Mean_Last_Three` as
+well, and this **lowers** its valuation from 38.86 to 22.79: growth genuinely collapsed from 28%
+to 5.6%, and 2016-2019 Tesla is not evidence about 2026 Tesla. That direction is the point. The
+base is a judgment about the business, not a dial pointed at the market price, and the one case
+where the honest choice hurts is the case that proves the rule.
+
+Combined result, terminal ROIC 20% for Apple/Microsoft/P&G, 12% for Tesla, 15% for Boeing:
+
+| | step 4a | + ROIC | + base | both | TV share | market | delta |
+|---|---|---|---|---|---|---|---|
+| Apple | 116.80 | 127.44 | 116.80 | **127.44** | 48.5% | 308.64 | -58.7% |
+| Microsoft | 280.78 | 308.35 | 280.78 | **308.35** | 54.2% | 464.72 | -33.6% |
+| P&G | 116.66 | 143.79 | 116.66 | **143.79** | 61.7% | 144.49 | **-0.5%** |
+| Tesla | 38.86 | 39.14 | 22.79 | **22.91** | 47.5% | 311.21 | -92.6% |
+| Boeing | 78.47 | 92.50 | 104.28 | **121.83** | 58.8% | 216.14 | -43.6% |
+
+**The terminal ROIC per company is an assumption and has to be written down before the run, not
+after.** 20% for P&G is the measured median and the only one resting on data. 20% for Apple and
+Microsoft is a judgment that both defend a durable spread over their cost of capital, taken
+against an unmeasurable denominator for Apple and a sharply falling series for Microsoft (188% to
+46.7%). 15% for Boeing and 12% for Tesla are set below their pre-crisis levels. This parameter is
+the single easiest place in the model to reverse-engineer a desired answer, which is exactly why
+the numbers live here rather than in the code.
+
+**Two risks this step creates.** The TV share rises to 48-62%; at P&G two thirds of the value now
+sit beyond year 10, and hitting the market within 0.5% at that weighting is closer to coincidence
+than to confirmation. And Gruppe 2 does not close the remaining gap for anyone else: even at
+infinite terminal ROIC Apple reaches 136.11 against 308.64. The reverse DCF from step 4a already
+named the reason — the market prices 20.2% revenue growth for a decade against a measured 6.30%.
+That is no longer a modelling gap; it is the model's statement.
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)

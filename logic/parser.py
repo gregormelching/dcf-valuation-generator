@@ -119,6 +119,10 @@ CASH_TAGS = {
         "LongTermInvestments"
     ],
 }
+EQUITY_TAGS = {
+    "Equity": ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+               "StockholdersEquity"]
+}
 metrics = {
     "Revenue": REVENUE_TAGS,
     "OperatingIncome": OPERATING_INCOME_TAGS,
@@ -130,6 +134,7 @@ metrics = {
     "PretaxIncome": PRETAX_TAGS,
     "InterestExpense": INTEREST_TAGS,
     "Tax": TAX_TAGS,
+    "Equity": EQUITY_TAGS,
     }
 units = ["USD", "shares"]   
 sec_layers = ["us-gaap", "dei"]                 
