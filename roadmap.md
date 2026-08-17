@@ -1181,6 +1181,101 @@ infinite terminal ROIC Apple reaches 136.11 against 308.64. The reverse DCF from
 named the reason — the market prices 20.2% revenue growth for a decade against a measured 6.30%.
 That is no longer a modelling gap; it is the model's statement.
 
+#### Step 4c — the EBIT margin fade target, decided per company — DONE
+
+**The margin was the last fade target nobody had decided.** `m_t` runs from the last actual EBIT
+margin to `EBIT_MARGIN`, and that was the ten-year median out of `driver_ratio` — inherited from
+step 2a, where the median is the right tool for CapEx and D&A ratios, and never examined for the
+margin. The TV then runs on the same number in perpetuity, so it carries the same weight as the
+tax rate corrected in step 4a, at 48-62% of value.
+
+Measured over 2016-2025, base WACC, `as_of = 2026-08-17`:
+
+| | last actual | 10y median | mean of last three clean | clean years (n) |
+|---|---|---|---|---|
+| Apple | 31.97% | 28.81% | 31.10% | 2016-2025 (10) |
+| Microsoft | 45.62% | 41.59% | 44.01% | 2017-2025 (9) |
+| P&G | 24.26% | 22.09% | 22.81% | 2016-2018, 2021-2025 (8) |
+| Tesla | 4.59% | 6.32% | 9.53% | 2017, 2019-2022, 2024, 2025 (7) |
+| Boeing | 4.79% | 6.98% | 1.86% | 2016-2018, 2022, 2023 (5) |
+
+| | `Driver_Ratio` | TV share | `Mean_Last_Three` | TV share | `Last` | TV share |
+|---|---|---|---|---|---|---|
+| Apple | 127.47 | 48.5% | **134.66** | 49.5% | 137.39 | 49.8% |
+| Microsoft | 308.42 | 54.2% | **322.36** | 54.8% | 331.65 | 55.2% |
+| P&G | 143.82 | 61.7% | **147.84** | 62.1% | 155.97 | 62.8% |
+| Tesla | 22.91 | 47.5% | 28.61 | 50.2% | **19.84** | 44.8% |
+| Boeing | 121.87 | 58.8% | 25.47 | 38.5% | **80.54** | 54.0% |
+
+**A string selector, not a float.** `terminal_roic` is a float because ROIC is unmeasurable for
+two of five. The margin is measurable for all five, so the choice is a selection among measured
+statistics — a free float would be the single easiest place in the model to reverse-engineer the
+market price, which step 4a explicitly rejected.
+
+**`"Last"` resolves to `LAST_EBIT_MARGIN`, not to a key in `driver_ratio`.** That function's last
+year is the last *clean* one, and for Boeing that is 2023 at -0.99% against a 2025 actual of 4.79%
+(flagged `outlier`). A `Last` key taken from there would fade 4.79% down to -0.99% — the most
+aggressive of the three options, under the label "no change". With target equal to start, `m_t`
+collapses to a constant and needs no branch in the fade itself.
+
+**`driver_ratio` now returns `Years`, and it had to start sorting.** Boeing's "last three" are
+2018, 2022 and 2023; without the window in the return value the number reads as a statement about
+2023-2025 and is not one. The loop ran on `for year in data` while `get_data` has no `ORDER BY` —
+the median is order-invariant so this was inert, `ratios[-3:]` is not.
+
+**Decision per company.** Apple, Microsoft and P&G take `Mean_Last_Three`: their last three clean
+years are 2023-2025 in all three cases, a genuinely contiguous window, and the ten-year median
+reaches back past the mix shift — Services at Apple, Azure scale at Microsoft. The margin still
+fades down from the last actual, just not to the pre-shift level.
+
+Tesla and Boeing take `Last`, and both times it **lowers** the valuation. Tesla's
+`Mean_Last_Three` of 9.53% comes from 2022, 2024 and 2025 and would claim the margin more than
+doubles over the fade; the median of 6.32% is also above the current 4.59%. Boeing has five clean
+years and none of them is 2024 or 2025 — `Mean_Last_Three` averages 2018, 2022 and 2023 into
+1.86%, the median of 6.98% assumes a return to pre-MAX profitability. `Last` is the least bad
+because it at least stands on the current state. Same reasoning as the growth base in step 2c-1,
+and the same direction: 22.91 → 19.84 and 121.87 → 80.54.
+
+Combined result:
+
+| | step 2c-1 | + margin base | chosen | market | delta |
+|---|---|---|---|---|---|
+| Apple | 127.44 | **134.66** | `Mean_Last_Three` | 308.64 | -56.4% |
+| Microsoft | 308.35 | **322.36** | `Mean_Last_Three` | 464.72 | -30.6% |
+| P&G | 143.79 | **147.84** | `Mean_Last_Three` | 144.49 | **+2.3%** |
+| Tesla | 22.91 | **19.84** | `Last` | 311.21 | -93.6% |
+| Boeing | 121.83 | **80.54** | `Last` | 216.14 | -62.7% |
+
+P&G flips from -0.5% to +2.3%, which confirms the risk noted in step 2c-1: at a 62% TV share that
+hit was coincidence, not confirmation. Nothing here closes the remaining gap — with every open
+lever pushed to the most value-friendly defensible setting at once (margin flat, dNWC on the
+delta basis, terminal ROIC 30%) Apple reaches 142.53 against 308.64, and Tesla gets *worse* at
+13.53. The reverse DCF from step 4a stands.
+
+**Three defects cleared in the same pass.** The `__main__` in `valuation.py` passed
+`roic(...)["ROIC_Median"]` positionally into `exit_multiple`, where it was inert and would have
+raised `TypeError` on Apple's `None` as a keyword. `"SharesDated"` sat in `OUTLIER_RULES` but is
+never looked up, because `validate_values` iterates metric names and the metric is called
+`SharesOutstanding` after `clean_values`. `"Equity"` was missing from the `exceptions` list, so
+Boeing's correctly measured negative equity from 2019 to 2024 was flagged `negative` six times —
+the cached flags in `storage/values.db` still carry it until the next ingest.
+
+**Three items deliberately left open.**
+
+- *The fade start is unfiltered, the fade target is not.* `LAST_EBIT_MARGIN` comes straight from
+  `data[last_year]` with no flag check, while the target skips flagged years. For Boeing 2025 is
+  good enough as a starting point and discarded from the statistic. Unifying them is its own step
+  and not obviously right — a flag-checked start would no longer mean "where the company is".
+- *`dNWC` is dimensionally wrong.* `project_fcf` computes `dnwc = cur_rev * DNWC_MARGIN`, where
+  the driver is a median of *change* in working capital over the revenue *level*. A change scales
+  with the change in revenue, so at 2.5% terminal growth the model still books a working-capital
+  flow proportional to the entire revenue base instead of going toward zero. Worth -30.7% for
+  Tesla and +19.8% for Boeing; the clean fix needs NWC as a balance-sheet *level*, and
+  `WORKING_CAPITAL_TAGS` only collects the cash-flow deltas. That is a parser step.
+- *The same statistics now exist for D&A, CapEx and `WorkingCapital` but are not wired.* Microsoft
+  is the reason to look: CapEx runs at a 11.56% ten-year median against 18.11% over the last three
+  clean years — the AI build — and switching all drivers to the three-year window costs it 12.0%.
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - Optional: Monte Carlo simulation over uncertain inputs for a valuation range

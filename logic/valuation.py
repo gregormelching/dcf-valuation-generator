@@ -24,7 +24,7 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
     return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
     
 
-def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = "Growth_Rate_Median", method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None) -> dict:
+def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = "Growth_Rate_Median", method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str = "Driver_Ratio") -> dict:
     value = {}
     if as_of is None: as_of = datetime.now()
     else: as_of = datetime.strptime(as_of, "%Y-%m-%d")
@@ -45,7 +45,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         if terminal_roic is None: 
             t_roic = w[1]
             roic_source = "WACC"
-        fcf = project_fcf(data, years, t_roic, base)
+        fcf = project_fcf(data, years, t_roic, base, margin_base)
         PV_Explicit = 0
         
         for i, row in enumerate(sorted(fcf)[:-1], start = 1):
@@ -60,9 +60,9 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         equity = ev - data[last_year]["Debt"]["Value"] + data[last_year]["Cash"]["Value"]
         value_per_share = equity / data[last_year]["SharesOutstanding"]["Value"]
         
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "TV_Share": tv_share, "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source}
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "TV_Share": tv_share, "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"]}
         
     return value
 
 if __name__ == "__main__": 
-    print(dcf_value("apple", 2016, 10, "1mo", N_MONTHS, "Growth_Rate_Median", "gordon", roic(get_data("apple", 2016))["ROIC_Median"]))
+    print(dcf_value("apple", 2016, 10, "1mo", N_MONTHS, "Growth_Rate_Median", "gordon", terminal_roic = 0.20))
