@@ -98,12 +98,13 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     else:  EBIT_MARGIN = driver_ratio(data, "OperatingIncome")[margin_base]
     D_AND_A_MARGIN = driver_ratio(data, "D&A")["Driver_Ratio"]
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")["Driver_Ratio"]
-    DNWC_MARGIN = driver_ratio(data, "WorkingCapital")["Driver_Ratio"]
+    NWC_INTENSITY = driver_ratio(data, "NWC")["Driver_Ratio"]
     if terminal_roic <= TERMINAL_GROWTH: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
-    if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, DNWC_MARGIN]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
+    if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, NWC_INTENSITY]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
     rev = project_revenue(data, years, base)
     i = 0
+    prev_rev = data[last_year]["Revenue"]["Value"]
     
     for year in projected_years:
         i += 1
@@ -114,7 +115,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         nopat = ebit * (1 - t_t)
         da = cur_rev * D_AND_A_MARGIN
         capex = cur_rev * CAP_EX_MARGIN
-        dnwc = cur_rev * DNWC_MARGIN
+        dnwc = (cur_rev - prev_rev) * NWC_INTENSITY
         fcf = nopat + da - capex - dnwc
         value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base})
         
@@ -129,7 +130,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
             reinvestment = nopat * reinvestment_rate
             fcf = nopat - reinvestment
             value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic, "Tax_Rate": MARGINAL_TAX_RATE, "Margin_Base": margin_base})
-    
+        prev_rev = cur_rev
     return value
     
 def roic(data: dict) -> dict:

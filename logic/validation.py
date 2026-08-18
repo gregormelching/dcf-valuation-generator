@@ -12,14 +12,15 @@ OUTLIER_RULES = {
     "InterestExpense":      ("yoy", 0.5),
     "Debt":                 ("yoy", 0.5),
     "Cash":                 ("yoy", 0.5),
-    "Equity":               ("yoy", 0.5)
+    "Equity":               ("yoy", 0.5),
+    "NWC":                  ("yoy", 0.5)
 }
 
 RECON_TOLERANCE = 0.03
 
 def validate_values(values: dict) -> dict:
     flags = {year: {metric_name: [] for metric_name in values[year]} for year in values}
-    exceptions = ["OperatingIncome", "WorkingCapital", "Tax", "PretaxIncome", "Equity"]
+    exceptions = ["OperatingIncome", "WorkingCapital", "Tax", "PretaxIncome", "Equity", "NWC"]
     
     for year in values:
         for metric_name in values[year]:

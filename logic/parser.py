@@ -123,6 +123,22 @@ EQUITY_TAGS = {
     "Equity": ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
                "StockholdersEquity"]
 }
+NWC_LEVEL_TAGS = {
+    "Receivables": ["AccountsReceivableNetCurrent"],
+    "Inventory": ["InventoryNet", "InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings"],
+    "Payables": ["AccountsPayableCurrent"],
+    "DeferredRev": ["ContractWithCustomerLiabilityCurrent", "DeferredRevenueCurrent"]
+}
+NWC_LEVEL_SIGNS = {
+    "Receivables": 1,
+    "Inventory": 1,
+    "Payables": -1,
+    "DeferredRev": -1
+}
+SLOT_SIGNS = {
+    "WorkingCapital": WC_SIGNS,
+    "NWC": NWC_LEVEL_SIGNS
+}
 metrics = {
     "Revenue": REVENUE_TAGS,
     "OperatingIncome": OPERATING_INCOME_TAGS,
@@ -135,6 +151,7 @@ metrics = {
     "InterestExpense": INTEREST_TAGS,
     "Tax": TAX_TAGS,
     "Equity": EQUITY_TAGS,
+    "NWC": NWC_LEVEL_TAGS
     }
 units = ["USD", "shares"]   
 sec_layers = ["us-gaap", "dei"]                 
@@ -165,14 +182,18 @@ def select_shares(slots):
     if slots["SharesDated"]: return ["SharesDated"]
     if slots["SharesOutstanding"]: return ["SharesOutstanding"]
     return []
-    
+
+def select_nwc_level(slots):
+    return [s for s in NWC_LEVEL_TAGS if slots[s]]
+
 SLOT_SELECTORS = {
     "WorkingCapital": select_wc,
     "Cash": select_cash,
     "Debt": select_debt,
     "PretaxIncome": select_pretax,
     "DeferredTaxes": select_deferred_taxes,
-    "SharesOutstanding": select_shares
+    "SharesOutstanding": select_shares,
+    "NWC": select_nwc_level
 }
 
 def get_response(cik):
@@ -237,7 +258,7 @@ def clean_values(values: dict) -> dict:
                 slots = values[year][metric_name]
                 chosen = SLOT_SELECTORS[metric_name](slots)
                 if not chosen: continue
-                total = sum(slots[s]["Value"] * WC_SIGNS.get(s,1) for s in chosen)
+                total = sum(slots[s]["Value"] * SLOT_SIGNS.get(metric_name, {}).get(s, 1) for s in chosen)
                 tags = [slots[s]["Tag"] for s in chosen]
                 ends = [slots[s]["End"] for s in chosen]
                 forms = [slots[s]["Form"] for s in chosen]
@@ -247,5 +268,5 @@ def clean_values(values: dict) -> dict:
     return values
                 
 if __name__ == "__main__":
-    apple_vals = clean_values(get_values(1, "microsoft", metrics))
-    print(apple_vals)
+    for c in companies:
+        save_data(c)
