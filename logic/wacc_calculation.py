@@ -104,10 +104,10 @@ def cost_of_equity(beta: dict, rf: dict, erp: float = EQUITY_RISK_PREMIUM) -> di
     
     return value
 
-def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM) -> dict:
-    value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": ""}
+def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM, as_of: str | None = None) -> dict:
+    value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": "", "RF_Date": "", "RF_Fetched_At": ""}
     
-    rf = risk_free_rate()
+    rf = risk_free_rate(as_of)
     beta = adjusted_beta(data, symbol, freq, n)
     cost_equity = cost_of_equity(beta, rf, erp)
     cost_debt = cost_of_debt(data, COD_START_YEAR)
@@ -124,7 +124,7 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
     wacc_high = weight_equity * cost_equity["CI_High"] + weight_debt * after_tax_debt
     wacc = weight_equity * cost_equity["Cost_of_Equity"] + weight_debt * after_tax_debt
     
-    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source)})
+    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source), "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"]})
         
     return value
 

@@ -39,6 +39,13 @@ create_table = '''
             fetched_at TEXT NOT NULL,
             body TEXT NOT NULL,
             lib_version TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS rates (
+            series TEXT NOT NULL,
+            date TEXT NOT NULL,
+            rate REAL NOT NULL,
+            fetched_at TEXT NOT NULL,
+            UNIQUE(series, date)
         )
     '''
 
@@ -109,6 +116,24 @@ def insert_prices(symbol: str, freq: str, rows: list, adjusted: int) -> None:
                            (symbol, row[0], row[1], freq, adjusted)
                            )
         conn.commit()
+
+def insert_rates(series: str, rows: list) -> None:
+    with sqlite3.connect(database) as conn:
+        cursor = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for row in rows: 
+            cursor.execute("""INSERT INTO rates (series, date, rate, fetched_at)
+                           VALUES (?, ?, ?, ?)
+                           ON CONFLICT(series, date) DO UPDATE SET rate = EXCLUDED.rate, fetched_at = EXCLUDED.fetched_at
+                           """, (series, row[0], row[1], now))
+        conn.commit()
+        
+def get_rate(series: str, as_of: str) -> tuple | None:
+    with sqlite3.connect(database) as conn:
+        cursor = conn.cursor()
+        query = "SELECT date, rate, fetched_at FROM rates WHERE series = ? AND date <= ? ORDER BY date DESC LIMIT 1"
+        cursor.execute(query, (series, as_of))
+        return cursor.fetchone()
 
 def get_prices(symbol: str, freq: str, n: int) -> list:
     with sqlite3.connect(database) as conn:

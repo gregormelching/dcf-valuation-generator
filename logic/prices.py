@@ -1,10 +1,11 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-from database import insert_prices, insert_raw_download
+from database import insert_prices, insert_raw_download, insert_rates, get_rate
 yf.config.debug.hide_exceptions = False
 import requests as rq
 
+RF_SERIES = "DGS10"
 RF_MAX_AGE_DAYS = 10
 SYMBOLS = {
     "apple": "AAPL",
@@ -48,26 +49,32 @@ def fetch_prices(symbol: str, freq: str) -> list:
     
     return rows
  
-def risk_free_rate():
-    value = {"Risk_Free_Rate": 0, "Date": "", "Source": "FRED DGS10"}
-    url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10"
+def fetch_rates(series):
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
     response = rq.get(url)
     response.raise_for_status()
-    
     text = response.text.strip().splitlines()[1:]
-    for row in reversed(text):
+    rows = []
+    
+    for row in text:
         lst = row.split(",")
         if lst[1] == "": continue
-        rate = float(lst[1]) / 100
-        date = datetime.strptime(lst[0], "%Y-%m-%d")
-        today = datetime.now()
-        if (today - date).days > RF_MAX_AGE_DAYS: raise ValueError(f"Data from {date.strftime("%Y-%m-%d")} is too old. Please try again later.")
-        value.update({"Risk_Free_Rate": rate, "Date": date.strftime("%Y-%m-%d")})
-
-        
-        break
+        else: rows.append((lst[0], float(lst[1]) / 100))
+    insert_rates(series, rows)
+    return rows
+ 
+def risk_free_rate(as_of = None):
+    if as_of is None: as_of = datetime.now().strftime("%Y-%m-%d")
+    row = get_rate(RF_SERIES, as_of)
+    if row is not None: age = (datetime.strptime(as_of, "%Y-%m-%d") - datetime.strptime(row[0], "%Y-%m-%d")).days
+    if row is None or age > RF_MAX_AGE_DAYS: 
+        fetch_rates(RF_SERIES)
+        row = get_rate(RF_SERIES, as_of)
+    if row is None: raise ValueError("Risk free rate not found for the given date. Please try again later.")
+    age = (datetime.strptime(as_of, "%Y-%m-%d") - datetime.strptime(row[0], "%Y-%m-%d")).days
+    if age > RF_MAX_AGE_DAYS: raise ValueError(f"Risk free rate {row[0]} has expired. Please update your data and try again later.")
     
-    return value
+    return {"Risk_Free_Rate": row[1], "Date": row[0], "Source": f"FRED {RF_SERIES}", "Fetched_At": row[2], "As_Of": as_of}
  
 if __name__ == "__main__":
     print(risk_free_rate())

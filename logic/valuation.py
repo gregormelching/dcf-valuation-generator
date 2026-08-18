@@ -26,10 +26,12 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
 
 def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = "Growth_Rate_Median", method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str = "Driver_Ratio") -> dict:
     value = {}
+    as_of_str = as_of
     if as_of is None: as_of = datetime.now()
     else: as_of = datetime.strptime(as_of, "%Y-%m-%d")
+    
     data = get_data(symbol, start_year)
-    wacc_calc = calc_wacc(data, symbol, freq, n)
+    wacc_calc = calc_wacc(data, symbol, freq, n, as_of = as_of_str)
     wacc = wacc_calc["WACC"]
     wacc_low = wacc_calc["WACC_Low"]
     wacc_high = wacc_calc["WACC_High"]
@@ -65,4 +67,4 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
     return value
 
 if __name__ == "__main__": 
-    print(dcf_value("apple", 2016, 10, "1mo", N_MONTHS, "Growth_Rate_Median", "gordon", terminal_roic = 0.20))
+    print(dcf_value("tesla", 2010, 10, "1mo", N_MONTHS, "Growth_Rate_Median", "gordon", terminal_roic = 0.20))
