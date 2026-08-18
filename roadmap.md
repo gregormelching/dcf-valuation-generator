@@ -570,7 +570,7 @@ would flip sign silently.
 three of five companies run negative net reinvestment before it. That is the open half, and it
 sits in step 4b rather than here.
 
-#### Step 3a — price data and the risk-free rate — PART 1 DONE
+#### Step 3a — price data and the risk-free rate — DONE
 
 WACC needs a beta, and beta needs price series. New module `logic/prices.py` with `SYMBOLS`
 (the five companies plus `"market": "^GSPC"`) and `fetch_prices(symbol, freq)`. The market
@@ -1266,15 +1266,122 @@ the cached flags in `storage/values.db` still carry it until the next ingest.
   `data[last_year]` with no flag check, while the target skips flagged years. For Boeing 2025 is
   good enough as a starting point and discarded from the statistic. Unifying them is its own step
   and not obviously right — a flag-checked start would no longer mean "where the company is".
-- *`dNWC` is dimensionally wrong.* `project_fcf` computes `dnwc = cur_rev * DNWC_MARGIN`, where
-  the driver is a median of *change* in working capital over the revenue *level*. A change scales
-  with the change in revenue, so at 2.5% terminal growth the model still books a working-capital
-  flow proportional to the entire revenue base instead of going toward zero. Worth -30.7% for
-  Tesla and +19.8% for Boeing; the clean fix needs NWC as a balance-sheet *level*, and
-  `WORKING_CAPITAL_TAGS` only collects the cash-flow deltas. That is a parser step.
+- *`dNWC` is dimensionally wrong.* Resolved in step 4d below.
 - *The same statistics now exist for D&A, CapEx and `WorkingCapital` but are not wired.* Microsoft
   is the reason to look: CapEx runs at a 11.56% ten-year median against 18.11% over the last three
   clean years — the AI build — and switching all drivers to the three-year window costs it 12.0%.
+
+#### Step 4d — dNWC on the balance-sheet NWC level — DONE
+
+**The open item from step 4c, closed at the parser.** `WORKING_CAPITAL_TAGS` only ever collected
+the cash-flow-statement *deltas*, so the driver was a median of a change over a revenue level and
+`dnwc = cur_rev * DNWC_MARGIN` multiplied it by a level again. New metric `NWC` in `parser.py`,
+built from balance-sheet instants: `NWC_LEVEL_TAGS` with `Receivables`, `Inventory`, `Payables`,
+`DeferredRev`, signs `+1/+1/-1/-1` in `NWC_LEVEL_SIGNS`. `project_fcf` now computes
+`dnwc = (cur_rev - prev_rev) * NWC_INTENSITY`, with `prev_rev` seeded from the last actual revenue
+and advanced at the end of the loop. At 2.5% terminal growth the flow now scales with the growth
+increment instead of the whole revenue base.
+
+**`select_nwc_level` sums, it does not choose.** Every other multi-slot metric picks one variant by
+priority — `select_cash`, `select_debt`, `select_shares` are all "first filled slot wins". NWC is a
+sum of four independent positions, so the selector returns *all* filled slots. Reusing the priority
+shape here would have returned receivables alone and called it working capital.
+
+**`WC_SIGNS` had to become a per-metric dispatch.** `clean_values` applied `WC_SIGNS.get(s, 1)` to
+every multi-slot metric, not just `WorkingCapital`. That was inert only because no `Cash`, `Debt`
+or `PretaxIncome` slot happens to be named `Receivables`, `Inventory`, `Payables` or
+`DeferredRevenue`. A second signed metric makes the shared map a name collision waiting to happen,
+so it is now `SLOT_SIGNS[metric_name]` with `{}` as the default for unsigned metrics.
+
+Measured 2016-2025, `NWC / Revenue`:
+
+| | median | mean last three | 2016 | 2025 | range | components found |
+|---|---|---|---|---|---|---|
+| Apple | -9.68% | -8.82% | -12.75% | -8.03% | -13.07 .. -8.03 | all four |
+| Microsoft | -8.37% | -8.25% | -15.18% | -7.61% | -15.18 .. -7.03 | all four |
+| P&G | -2.21% | -2.31% | -0.36% | -1.77% | -3.96 .. -0.36 | no `DeferredRev` |
+| Tesla | -0.52% | +0.28% | -0.81% | +0.18% | -7.06 .. +0.81 | all four |
+| Boeing | +22.11% | +20.92% | +43.68% | +16.86% | +2.82 .. +43.68 | all four |
+
+**The sign is the finding.** Four of five carry *negative* working capital — payables and deferred
+revenue exceed receivables and inventory — so growth releases cash rather than consuming it, and
+`dNWC` is a positive contribution to FCF. Under the old formula that release was booked against the
+entire revenue base every single year, in perpetuity. Boeing is the only classical case: program
+inventory against customer advances, +22% of revenue.
+
+Effect in isolation, base WACC, `as_of = 2026-08-17`, per-company settings from steps 2c-1/4b/4c:
+
+| | old (level basis) | new (delta basis) | change | TV share old | TV share new |
+|---|---|---|---|---|---|
+| Apple | 133.81 | **133.97** | +0.1% | 49.2% | 49.2% |
+| Microsoft | 320.22 | **315.85** | -1.4% | 54.5% | 55.3% |
+| P&G | 146.35 | **143.40** | -2.0% | 61.7% | 62.9% |
+| Tesla | 19.79 | **11.58** | -41.5% | 44.6% | 226.9% |
+| Boeing | 79.82 | **57.77** | -27.6% | 53.8% | 65.9% |
+
+The three low-intensity names barely move, which is the expected result: a small ratio times a
+small delta against a small ratio times a large level lands in the same neighbourhood once the
+growth rate is low. Tesla and Boeing move hard because their old `WorkingCapital` deltas and their
+new NWC levels disagree in both magnitude and sign.
+
+**Two definitional breaks the sum papers over.** P&G has neither `ContractWithCustomerLiabilityCurrent`
+nor `DeferredRevenueCurrent`, so its NWC is a three-component figure while everyone else's has four
+— the selector takes what is there and the `Tag` string is the only place this is visible. And
+Boeing's inventory tag is `InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings`: customer
+advances are already netted *inside* the inventory line, where every other filer would carry them as
+a separate liability. Boeing's +22.11% is therefore not comparable to the other four as a ratio.
+
+**Boeing's intensity is not stationary and the median hides it.** It falls from 43.68% to 16.86%
+across the window — the median of 22.11% is a statement about 2019-2020, not about the current
+balance sheet. `Mean_Last_Three` at 20.92% is barely different because `driver_ratio`'s clean years
+for Boeing end in 2023. Same structural problem as the EBIT margin in step 4c, and it is not yet
+decided.
+
+**New defect this exposes: Tesla's explicit period has negative present value.**
+
+| | WACC | PV explicit | PV TV | EV | value/share | TV share |
+|---|---|---|---|---|---|---|
+| Tesla low | 8.81% | -9.94bn | 27.57bn | 18.59bn | 14.52 | 156.4% |
+| Tesla base | 11.28% | -8.95bn | 16.01bn | 7.54bn | 11.58 | 226.9% |
+| Tesla high | 13.76% | -8.11bn | 10.14bn | 2.20bn | 10.15 | 500.3% |
+
+FCF is negative in all ten explicit years, and the cause is not `dNWC` — it is CapEx at 9.90% of
+revenue against D&A at 5.08% and a flat 4.59% EBIT margin. NOPAT of ~3.6bn cannot cover a ~4.8bn
+net reinvestment. That is a coherent statement about the inputs, but `TV_Share = PV_TV /
+(PV_Explicit + PV_TV)` stops meaning anything once the denominator is smaller than the numerator,
+and it is printed as a headline diagnostic. It needs either a guard or a different definition
+before Phase 3 puts it in a sensitivity grid.
+
+**One inert oddity left in place.** `prev_rev = cur_rev` sits after the `if i == years` block, which
+has already overwritten `cur_rev` with the *terminal* revenue. Harmless because that is the last
+iteration, but it reads as a bug and will become one if anything is appended to the loop.
+
+#### Phase 2 — status
+
+Steps 0 through 4d are done. What is left before the phase closes:
+
+- **The Damodaran cross-check named in the learning goals has not been done.** WACC, terminal value
+  and the equity bridge were each derived and verified internally; none of them has been held
+  against an external reference. This is the explicit exit condition of the phase.
+- **Nothing pins a valuation to a data vintage, so no run is reproducible.** `risk_free_rate()`
+  hits FRED live on every call and `calc_wacc` takes no `as_of`. Measured on 2026-08-18 the rate is
+  unchanged at 4.68% (DGS10, observation 2026-08-14) and the cached prices are identical, so that
+  is *not* what moved the step 4d old-basis numbers off the step 4c table. The cause is the
+  2026-08-18 re-ingest: newest-filing-wins picked up restated balance-sheet figures, and the equity
+  weights moved with them — Boeing 72.56% → 73.15%, P&G 91.13% → 90.75%, Apple 97.91% → 97.88%,
+  Tesla 99.26% → 99.31%, Microsoft unchanged. Boeing's WACC went 7.81% → 7.85% and its value per
+  share 80.54 → 79.82. Two separate leaks, and the rate is the easier one: a `rates` table in
+  `database.py` is started but unfinished.
+- **The exit-multiple path is built and never used.** `terminal_value(method="multiple")` requires
+  an `exit_multiple` the caller must supply, and no comparable-multiple source exists. Phase 2's
+  scope says "offer both". Either wire a source or write down that Gordon is the only supported
+  method and why.
+- **`TV_Share` breaks when `PV_Explicit` is negative** (Tesla, above).
+- **The three-year driver window is measured but not wired.** D&A, CapEx and `NWC` all carry
+  `Mean_Last_Three` and all three still use `Driver_Ratio`. Microsoft is the case that matters:
+  CapEx 11.56% median against 18.11% over the last three clean years, worth -12.0%.
+- **The fade start is unfiltered, the fade target is not** (step 4c, still open).
+- **Boeing's NWC intensity is not stationary** (above, still open).
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
