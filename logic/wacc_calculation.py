@@ -1,4 +1,5 @@
 from database import get_data, get_prices
+from datetime import datetime
 from model import MIN_YEARS, MARGINAL_TAX_RATE
 import statistics as stats
 import math
@@ -33,11 +34,11 @@ def cost_of_debt(data: dict, start_year: int = COD_START_YEAR) -> dict:
         value.update({"Cost_of_Debt": None, "n": len(costs), "Source": "Insufficient"})
     return value
 
-def raw_beta(symbol: str, freq: str, n: int) -> dict:
+def raw_beta(symbol: str, freq: str, n: int, as_of: str) -> dict:
     value = {"Beta": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": freq}
     
-    stock = get_prices(symbol, freq, n)
-    market = get_prices("market", freq, n)
+    stock = get_prices(symbol, freq, n, as_of)
+    market = get_prices("market", freq, n, as_of)
     
     if False in [stock[i][0] == market[i][0] for i in range(len(stock))]: raise ValueError("Stock and market must have the same date")
 
@@ -58,13 +59,13 @@ def raw_beta(symbol: str, freq: str, n: int) -> dict:
     value.update({"Beta": round(beta, 3), "Correlation": round(corr, 3), "Std_Error": round(se, 3), "n": num_returns})
     return value
 
-def debt_to_equity(data: dict, symbol: str, year: int | None) -> float: 
+def debt_to_equity(data: dict, symbol: str, year: int | None, as_of: str) -> float: 
     
     if year is None: debt_year = max(data)
     else: debt_year = year
     if data[debt_year]["Debt"]["Value"] in (0, None) or data[debt_year]["SharesOutstanding"]["Value"] in (0, None): raise ValueError("Missing Debt or SharesOutstanding value")
     
-    prices = dict(get_prices(symbol, "1mo", N_MONTHS))
+    prices = dict(get_prices(symbol, "1mo", N_MONTHS, as_of))
     
     if year is None: close = list(prices.items())[-1][1]
     else: close = [i[1] for i in prices.items() if i[0].startswith(f"{year}-12")][-1]
@@ -73,13 +74,13 @@ def debt_to_equity(data: dict, symbol: str, year: int | None) -> float:
     
     return data[debt_year]["Debt"]["Value"] / market_cap
 
-def adjusted_beta(data: dict, symbol: str, freq: str, n: int) -> dict:
+def adjusted_beta(data: dict, symbol: str, freq: str, n: int, as_of: str) -> dict:
     value = {"Beta": 0, "Beta_Raw": 0, "Beta_Unlevered": 0, "Beta_Relevered": 0, "DE_Window": 0, "DE_Current": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": ""}
     
-    raw = raw_beta(symbol, freq, n)
-    years = sorted(set([int(year[0].split("-")[0]) for year in get_prices(symbol, freq, n) if year[0].split("-")[1] == "12"]))
-    de_window = stats.mean([debt_to_equity(data, symbol, year) for year in years])
-    de_current = debt_to_equity(data, symbol, None)
+    raw = raw_beta(symbol, freq, n, as_of)
+    years = sorted(set([int(year[0].split("-")[0]) for year in get_prices(symbol, freq, n, as_of) if year[0].split("-")[1] == "12"]))
+    de_window = stats.mean([debt_to_equity(data, symbol, year, as_of) for year in years])
+    de_current = debt_to_equity(data, symbol, None, as_of)
     beta_u = raw["Beta"] / (1 + (1 - MARGINAL_TAX_RATE) * de_window)
     beta_rel = beta_u * (1 + (1 - MARGINAL_TAX_RATE) * de_current)
     beta_adj = 0.67 * beta_rel + 0.33
@@ -106,9 +107,9 @@ def cost_of_equity(beta: dict, rf: dict, erp: float = EQUITY_RISK_PREMIUM) -> di
 
 def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM, as_of: str | None = None) -> dict:
     value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": "", "RF_Date": "", "RF_Fetched_At": ""}
-    
+    if as_of is None: as_of = datetime.now().strftime("%Y-%m-%d")
     rf = risk_free_rate(as_of)
-    beta = adjusted_beta(data, symbol, freq, n)
+    beta = adjusted_beta(data, symbol, freq, n, as_of)
     cost_equity = cost_of_equity(beta, rf, erp)
     cost_debt = cost_of_debt(data, COD_START_YEAR)
     cod_source = COD_START_YEAR
@@ -116,7 +117,7 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
         cost_debt = cost_of_debt(data, COD_FALLBACK_START_YEAR)
         cod_source = COD_FALLBACK_START_YEAR
     if cost_debt["Source"] == "Insufficient": raise ValueError("Insufficient Data")
-    de = debt_to_equity(data, symbol, None)
+    de = debt_to_equity(data, symbol, None, as_of)
     weight_equity = 1 / (1 + de)
     weight_debt = de / (1 + de)
     after_tax_debt = cost_debt["Cost_of_Debt"] * (1 - MARGINAL_TAX_RATE)
@@ -129,11 +130,8 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
     return value
 
 if __name__ == "__main__":
-    data = get_data("apple", 2016) 
-    #print(cost_of_debt(data, 2018))
-    #print(raw_beta("apple", "1mo", 61))
-    #print(debt_to_equity(data, "apple", 2025))
-    beta = adjusted_beta(data, "apple", "1mo", N_MONTHS)
-    rf = risk_free_rate()
-    #print(cost_of_equity(beta, rf, EQUITY_RISK_PREMIUM))
-    print(calc_wacc(data, "apple", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM))
+    as_of = "2026-08-19"
+    data = get_data("microsoft", 2016) 
+    beta = adjusted_beta(data, "microsoft", "1mo", N_MONTHS, as_of)
+    rf = risk_free_rate(as_of)
+    print(calc_wacc(data, "microsoft", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM, as_of))

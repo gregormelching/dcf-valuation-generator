@@ -1356,32 +1356,257 @@ before Phase 3 puts it in a sensitivity grid.
 has already overwritten `cur_rev` with the *terminal* revenue. Harmless because that is the last
 iteration, but it reads as a bug and will become one if anything is appended to the loop.
 
+#### Step 4e — the driver window, decided per company — DONE
+
+**The last inherited default.** D&A, CapEx and `NWC` all took the ten-year median out of
+`driver_ratio`, chosen in step 2a for its robustness against a single bad year and never examined
+per driver afterwards. `project_fcf` now takes `metrics`, a dict keyed by `"D&A"`, `"CapEx"` and
+`"NWC"` with `"Driver_Ratio"` or `"Mean_Last_Three"` as values; a metric that is not named falls
+back to the median, so every call written before this step returns the same number. The resolved
+selection travels into every explicit year row and into the scenario dict as `Metrics`, in the
+order D&A, CapEx, NWC.
+
+**A dict per driver, not one shared string.** Microsoft is the reason: the structural break sits in
+CapEx alone, while its D&A and NWC are stationary. A single switch would move all three at once and
+the output could no longer say why D&A changed — the same traceability `ROIC_Source` was introduced
+for in step 4b. `"Last"` is deliberately not offered here: for the EBIT margin it was needed because
+the margin *starts* at the last actual, but a driver ratio has no fade, so a single year would run
+in perpetuity.
+
+Measured 2016-2025. All three drivers are clean in all ten years for all five companies, so the
+three-year window is 2023-2025 everywhere — the note in step 4d that `driver_ratio`'s clean years
+for Boeing end in 2023 applies to `OperatingIncome`, not to these three.
+
+| | D&A median / last three | CapEx median / last three | NWC median / last three |
+|---|---|---|---|
+| Apple | 3.56% / 2.91% | 3.04% / 2.78% | -9.68% / -8.82% |
+| Microsoft | 6.34% / 6.40% | 11.56% / **18.11%** | -8.37% / -8.25% |
+| P&G | 3.88% / 3.38% | 4.40% / 4.05% | -2.21% / -2.31% |
+| Tesla | 5.08% / 4.32% | 9.90% / 9.93% | -0.52% / +0.28% |
+| Boeing | 2.58% / 2.45% | 2.10% / **2.87%** | 22.11% / 20.92% |
+
+Effect in isolation, one driver switched at a time, base WACC, `as_of = 2026-08-19`, per-company
+settings from steps 2c-1/4b/4c/4d:
+
+| | median (today) | only D&A | only CapEx | only NWC | all three |
+|---|---|---|---|---|---|
+| Apple | 134.03 | 132.36 | 134.70 | 133.94 | **132.93** |
+| Microsoft | 316.00 | 316.27 | **286.77** | 315.96 | 287.00 |
+| P&G | 143.45 | 141.84 | 144.58 | 143.46 | **142.98** |
+| Tesla | 11.58 | 10.03 | 11.52 | 11.52 | 9.90 |
+| Boeing | 57.81 | 56.16 | **48.01** | 58.79 | 47.33 |
+
+**Decision per company.**
+
+*Microsoft takes the three-year window on CapEx alone.* The ratio runs 9.15% (2016), 13.26% (2023),
+18.14% (2024), 22.91% (2025) — a seven-year ramp, not an outlier, and the 11.56% median describes a
+company that no longer exists. D&A (5.19% to 7.81%, no trend) and NWC (-7.0% to -10.2% since 2017)
+stay on the median because nothing broke there.
+
+*The counterargument belongs in the same paragraph:* 18.11% CapEx now sits against 6.40% D&A for
+all ten explicit years, so the model asserts that the AI build-out intensity is permanent. There is
+no fade for driver ratios, so "elevated now, normalising later" cannot be expressed at all — that is
+the honest limit of this decision, and the main reason Microsoft's -38.3% gap to market should not
+be read as a precise number.
+
+*Boeing takes the three-year window on CapEx as well*, 2.10% median against 3.35% (2024) and 3.29%
+(2025). The evidence is thinner than Microsoft's — two years, not seven — and the effect is the
+largest single move in the whole comparison at -17.0%. It is taken anyway because the alternative is
+a 2.10% median drawn from the grounding and pandemic years, when Boeing was not investing.
+
+*Boeing keeps the median on NWC, and the window does not fix the problem.* The ratio runs 43.68,
+4.30, 2.82, 16.70, 34.83, 30.86, 26.10, 18.12, 27.79, 16.86 percent — it oscillates, it does not
+drift, and neither 22.11% (median) nor 20.92% (last three) is a statement about the current balance
+sheet. Choosing between them would dress up a driver that is not stationary; it stays on the median
+and becomes a sensitivity axis in Phase 3.
+
+*Apple and P&G take the three-year window on all three drivers.* Both have falling D&A and CapEx
+ratios (Apple 4.87% to 2.81% and 5.91% to 3.06%; P&G 4.71% to 3.38% and 5.08% to 4.48%), the last
+three clean years are contiguous 2023-2025, and the choice is consistent with their margin base from
+step 4c. It decides nothing either way: every combination lands within 1.5%.
+
+*Tesla stays on the median for all three.* Its D&A ratio falls from 6.82% to 2.97% (2022) and rises
+back to 5.30% (2025); the three-year window would catch half of that rebound and sell it as a level,
+costing -13.4% on no structural argument. CapEx is flat across both windows and NWC hovers around
+zero.
+
+Combined result, base WACC, `as_of = 2026-08-19`:
+
+| | step 4d | + driver window | `Metrics` (D&A/CapEx/NWC) | TV share | market | delta |
+|---|---|---|---|---|---|---|
+| Apple | 134.03 | **132.93** | m3 / m3 / m3 | 49.6% | 308.64 | -56.9% |
+| Microsoft | 316.00 | **286.77** | med / m3 / med | 61.1% | 464.72 | -38.3% |
+| P&G | 143.45 | **142.98** | m3 / m3 / m3 | 63.1% | 144.49 | -1.0% |
+| Tesla | 11.58 | **11.58** | med / med / med | 226.9% | 311.21 | -96.3% |
+| Boeing | 57.81 | **48.01** | med / m3 / med | 73.2% | 216.14 | -77.8% |
+
+Market prices are the last cached monthly close, 2026-07-31 — the price side is not yet pinned to
+`as_of`, see the status block below.
+
+**Every decision in this step lowered the valuation or left it flat**, and P&G's -1.0% moves it from
++2.3% back through the market price. Third step in a row where the defensible choice is the lower
+one, and it is worth stating plainly: the model says all five names are expensive, and the two where
+the gap is smallest (P&G, Microsoft) are the two carrying 61-63% of their value beyond year 10.
+
+**Two things this step does not settle.** Microsoft's CapEx has no fade path, as above. And Boeing's
+TV share rises to 73.2%, because the higher CapEx ratio pushes its explicit period toward zero — the
+same failure mode as Tesla, one step earlier in its development.
+
+#### Step 5 — the `TV_Share` guard — DONE
+
+**A ratio that was never a share.** `TV_Share` divides `PV_TV` by `PV_Explicit + PV_TV` and was
+emitted unconditionally, so Tesla carried 226.9% into every table. `dcf_value` now computes it only
+when `PV_Explicit` and `PV_tv` are both positive; otherwise it stays `None` and `TV_Share_Source`
+names the side that failed, built from the same two conditions rather than enumerated per case.
+`PV_Explicit` is no longer overwritten with `None` — the previous guard nulled the one number in
+that block that was correctly measured.
+
+**Why both sides are tested, not the denominator.** Tesla's base case is -8.95 + 16.01 = 7.06 bn,
+a positive denominator. A check on the sum alone passes exactly the case that produced the 226.9%.
+
+Base WACC, `as_of = 2026-08-19`, `start_year = 2016`, settings from `ASSUMPTIONS`. Billions USD:
+
+| | PV_Explicit | PV_TV | TV_Share | TV_Share_Source | Value_Per_Share |
+|---|---|---|---|---|---|
+| Apple | 900.92 | 886.30 | 49.6% | Calculated | 132.93 |
+| Microsoft | 726.09 | 1142.55 | 61.1% | Calculated | 286.77 |
+| P&G | 123.22 | 210.98 | 63.1% | Calculated | 142.98 |
+| Tesla | **-8.95** | 16.01 | **None** | **PV_Explicit <= 0** | 11.58 |
+| Boeing | 17.79 | 48.53 | 73.2% | Calculated | 48.01 |
+
+No valuation moved. `EV`, `Equity_Value` and `Value_Per_Share` are untouched by the guard, because
+`TV_Share` is a diagnostic and not an input to the equity bridge — nulling Tesla's valuation over an
+undefined diagnostic would have removed the most informative result in the set from every table.
+
+**The number was not merely above 100%, it was diverging.** Across the WACC band Tesla's
+`PV_Explicit` runs -9.94 / -8.95 / -8.11 and the old `TV_Share` ran 156.4% / 226.9% / 500.3%: the
+denominator approaches zero as the discount rate rises, so the quantity has no bounded
+interpretation at all. This matters for Phase 3, where the same function is swept over a WACC by
+terminal-growth grid — without the guard a band of cells would have shown large finite numbers with
+no meaning, and `TV_Share_Source` is what tells you per cell whether the explicit period or the
+terminal value is the side that broke.
+
+**What this does not fix.** Tesla's negative explicit PV is a statement of the model, not a defect:
+at the last actual EBIT margin and the 4b terminal ROIC of 12%, ten years of reinvestment consume
+more than NOPAT produces. The guard makes that visible instead of dressing it up as a share. The
+`PV_TV <= 0` branch is unreachable for the current five — all carry positive EBIT margin targets —
+and exists for a loss-making company under `margin_base = "Last"`, and to keep the division from
+raising on an exactly zero denominator.
+
+#### Step 6a — prices pinned to `as_of` — DONE
+
+**The second of the two vintage leaks is closed.** `get_prices` takes `as_of` and bounds the window
+with `date <= ?`, the same shape `get_rate` already used. The parameter is threaded through
+`raw_beta` (both the stock and the market call, so the date-alignment check cannot pair different
+days), `debt_to_equity`, `adjusted_beta` (including the December-year list that builds `DE_Window`)
+and `calc_wacc`, which now owns the single `None` → today normalisation — `date <= NULL` returns no
+rows rather than raising, so no downstream function may be handed `None`.
+
+**No number moved, and that is the test.** The newest cached monthly close is 2026-07-31, below the
+2026-08-19 stichtag, so the bound selects exactly the rows the unbounded query returned. Measured
+before and after, base WACC, `start_year = 2016`, settings from `ASSUMPTIONS`:
+
+| | Beta (adj.) | DE_Window | DE_Current | WACC | Value_Per_Share |
+|---|---|---|---|---|---|
+| Apple | 1.0506 | 0.0387 | 0.0216 | 9.025% | 132.93 |
+| Microsoft | 1.0677 | 0.0197 | 0.0125 | 9.182% | 286.77 |
+| P&G | 0.5895 | 0.0972 | 0.1020 | 6.724% | 142.98 |
+| Tesla | 1.5558 | 0.0073 | 0.0070 | 11.284% | 11.58 |
+| Boeing | 1.1098 | 0.4375 | 0.3671 | 7.850% | 48.01 |
+
+That the bound actually binds is shown separately: `get_prices("apple", "1mo", 61, "2024-06-30")`
+raises, and with `n = 36` returns the series ending 2024-06-30 at 208.63.
+
+**Backward pinning does not work yet, and the cache is why.** `fetch_prices` truncates to
+`N_MONTHS` before `insert_prices`, so each symbol holds exactly 61 monthly rows, 2021-07-31 to
+2026-07-31. Any `as_of` more than a few months back starves the 61-month beta window and hits the
+`Too few prices` raise. The interface is correct; the stored history is not deep enough to use it.
+Widening it means keeping the full `PERIOD` download instead of the truncated slice.
+
+**The bound is one-sided.** `get_prices` never fetches. If the cache ends well before `as_of`, the
+valuation runs on stale prices without complaint — unlike the rate path, which `RF_MAX_AGE_DAYS`
+guards. The asymmetry is deliberate for now, not resolved.
+
+#### Step 6b — the filing vintage, recorded — DONE
+
+**The database now knows which filing a number came from.** The parser has carried `Filed` per fact
+since step 0 and threw it away at the database boundary. `clean_values` now also sets `Filed` for
+the composed metrics, as the maximum over the slots the selector chose — a summed figure is only as
+current as its newest component, so `min` or the first slot would understate its age. `data` gained
+a `filed` column, `insert_data` writes it in both branches and in the `DO UPDATE SET`, `get_data`
+returns it as `Filed`, and `dcf_value` reduces it to `Data_Filed`: the newest filing across every
+year and metric the valuation stands on, `None` when nothing carries a date.
+
+**Migrated with `ALTER TABLE`, not by rebuilding.** `CREATE TABLE IF NOT EXISTS` never alters an
+existing table, so deleting `values.db` is the obvious shortcut and the wrong one — the same file
+holds `prices`, `rates` and `raw_downloads`, and since `fetch_prices` truncates to `N_MONTHS` before
+the insert, the 61-month price history that step 6a pins against would not come back from a
+re-download either.
+
+**Nothing moved, which is the point.** The re-ingest reads the JSONs in `storage/` from 2026-08-18,
+the same source the previous database was built from:
+
+| | Data_Filed | rows with `filed` | Value_Per_Share |
+|---|---|---|---|
+| Apple | 2025-10-31 | 237 | 132.93 |
+| Microsoft | 2026-07-29 | 233 | 286.77 |
+| P&G | 2026-08-04 | 232 | 142.98 |
+| Tesla | 2026-01-29 | 219 | 11.58 |
+| Boeing | 2026-01-30 | 246 | 48.01 |
+
+1167 of 1850 rows carry a date; the rest are metrics flagged `missing`, which keep NULL rather than
+a substituted one.
+
+**Two things the column made visible immediately.** P&G's newest filing is 2026-08-04, four days
+before the ingest that shifted the step 4d numbers — the same class of event, now dated instead of
+reconstructed. And Microsoft's fiscal 2025 figures carry `filed = 2026-07-29`, so they come from the
+FY2026 10-K's comparatives, not from the original FY2025 report. That is newest-filing-wins working
+exactly as written in `parser.py`, and it was invisible until now.
+
+**This labels the vintage, it does not pin it.** Nothing filters filings by `as_of`; a valuation can
+state which filing it stands on but still cannot reproduce an earlier one. Doing that means moving
+the selection out of `parser.py` into read time, keyed on `accn`, and re-running the ingest — the
+SEC companyfacts response carries every vintage with its `filed` date, so the history is
+recoverable, it is simply not kept. Deliberately deferred past Phase 2: it costs more than every
+step so far and improves no valuation, it only protects future comparisons.
+
 #### Phase 2 — status
 
-Steps 0 through 4d are done. What is left before the phase closes:
+Steps 0 through 6b are done. What is left before the phase closes:
 
 - **The Damodaran cross-check named in the learning goals has not been done.** WACC, terminal value
   and the equity bridge were each derived and verified internally; none of them has been held
   against an external reference. This is the explicit exit condition of the phase.
-- **Nothing pins a valuation to a data vintage, so no run is reproducible.** `risk_free_rate()`
-  hits FRED live on every call and `calc_wacc` takes no `as_of`. Measured on 2026-08-18 the rate is
-  unchanged at 4.68% (DGS10, observation 2026-08-14) and the cached prices are identical, so that
-  is *not* what moved the step 4d old-basis numbers off the step 4c table. The cause is the
-  2026-08-18 re-ingest: newest-filing-wins picked up restated balance-sheet figures, and the equity
-  weights moved with them — Boeing 72.56% → 73.15%, P&G 91.13% → 90.75%, Apple 97.91% → 97.88%,
-  Tesla 99.26% → 99.31%, Microsoft unchanged. Boeing's WACC went 7.81% → 7.85% and its value per
-  share 80.54 → 79.82. Two separate leaks, and the rate is the easier one: a `rates` table in
-  `database.py` is started but unfinished.
+- **The filing vintage is labelled but not pinned.** All three vintage leaks are now visible: the
+  rate is served from the `rates` table under `as_of`, prices are bounded by `date <= as_of` (step
+  6a), and every valuation reports the newest filing it stands on as `Data_Filed` (step 6b). Only
+  the filings remain unpinned — `parser.py` still resolves newest-filing-wins at write time with no
+  `as_of` bound, so a re-ingest can still move a past number. The measured case: the 2026-08-18
+  re-ingest picked up restated balance-sheet figures and moved the equity weights — Boeing 72.56% →
+  73.15%, P&G 91.13% → 90.75%, Apple 97.91% → 97.88%, Tesla 99.26% → 99.31%, Microsoft unchanged —
+  taking Boeing's WACC 7.81% → 7.85% and its value per share 80.54 → 79.82. Full point-in-time is
+  scoped and deferred past Phase 2 (step 6b).
 - **The exit-multiple path is built and never used.** `terminal_value(method="multiple")` requires
   an `exit_multiple` the caller must supply, and no comparable-multiple source exists. Phase 2's
   scope says "offer both". Either wire a source or write down that Gordon is the only supported
   method and why.
-- **`TV_Share` breaks when `PV_Explicit` is negative** (Tesla, above).
-- **The three-year driver window is measured but not wired.** D&A, CapEx and `NWC` all carry
-  `Mean_Last_Three` and all three still use `Driver_Ratio`. Microsoft is the case that matters:
-  CapEx 11.56% median against 18.11% over the last three clean years, worth -12.0%.
+- **The per-company settings are wired but not enforced.** `ASSUMPTIONS` in `valuation.py` now
+  carries growth base, `terminal_roic`, `margin_base` and `metrics` for all five companies, and
+  `__main__` unpacks it against `start_year = 2016` and an explicit `as_of`. What is missing is the
+  link back to this file: nothing checks the dict against the tables in steps 2c-1, 4b, 4c and 4e,
+  and `dcf_value`'s own defaults still describe the pre-4c model (`margin_base = "Driver_Ratio"`,
+  `terminal_roic = None` falling back to WACC). A call that forgets to unpack `ASSUMPTIONS` returns
+  a number that looks valid and is not the decided basis.
+- **The cached price history is 61 monthly rows deep**, so `as_of` cannot be moved back more than a
+  few months without starving the beta window (step 6a). `fetch_prices` truncates to `N_MONTHS`
+  before the insert; keeping the full `PERIOD` download would fix it.
+- **Prices have no staleness bound**, unlike the rate path with `RF_MAX_AGE_DAYS` (step 6a).
+- **The rate-pinning work has no step section in this file.** `database.py`'s `rates` table,
+  `get_rate`, `risk_free_rate(as_of)` and the `RF_MAX_AGE_DAYS` bound were built and committed
+  without a write-up, so the only record of why the staleness bound is ten days is the code.
 - **The fade start is unfiltered, the fade target is not** (step 4c, still open).
-- **Boeing's NWC intensity is not stationary** (above, still open).
+- **Boeing's NWC intensity is not stationary** (step 4d; step 4e could not fix it with a window
+  choice, so it becomes a Phase 3 sensitivity axis).
 
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)

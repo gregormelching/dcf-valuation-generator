@@ -262,7 +262,8 @@ def clean_values(values: dict) -> dict:
                 tags = [slots[s]["Tag"] for s in chosen]
                 ends = [slots[s]["End"] for s in chosen]
                 forms = [slots[s]["Form"] for s in chosen]
-                slots.update({"Value": total, "Tag": "+".join(tags), "End": max(ends), "Form": forms[0]})
+                filed = [slots[s]["Filed"]for s in chosen]
+                slots.update({"Value": total, "Tag": "+".join(tags), "End": max(ends), "Form": forms[0], "Filed": max(filed)})
             elif len(values[year][metric_name]) == 1:
                 values[year][metric_name] = values[year][metric_name][metric_name]
     return values

@@ -88,17 +88,31 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") ->
     
     return value
 
-def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio") -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None) -> dict:
     last_year = sorted(data)[-1]
+    if metrics is None: metrics = {}
+
+    keys = metrics.keys()
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0, "EBIT_Margin": "", "Reinvestment": 0, "Reinvestment_Rate": 0, "Terminal_ROIC": 0, "Tax_Rate": 0} for year in range(last_year + 1, last_year + 2 + years)}
+    if any(key not in ["D&A", "NWC", "CapEx"] or metrics[key] not in ["Driver_Ratio", "Mean_Last_Three"] for key in keys): raise ValueError(f"Unkown metric: {[key for key in keys if key not in ["D&A", "NWC", "CapEx"]]}")
     if margin_base not in ["Driver_Ratio", "Mean_Last_Three", "Last"]: raise ValueError(f"Unknown margin_base: {margin_base}")
     LAST_EBIT_MARGIN = data[last_year]["OperatingIncome"]["Value"] / data[last_year]["Revenue"]["Value"]
     if margin_base == "Last": EBIT_MARGIN = LAST_EBIT_MARGIN
     else:  EBIT_MARGIN = driver_ratio(data, "OperatingIncome")[margin_base]
-    D_AND_A_MARGIN = driver_ratio(data, "D&A")["Driver_Ratio"]
-    CAP_EX_MARGIN = driver_ratio(data, "CapEx")["Driver_Ratio"]
-    NWC_INTENSITY = driver_ratio(data, "NWC")["Driver_Ratio"]
+    
+    default = "Driver_Ratio"
+    if "D&A" in keys: da_str = metrics.get("D&A") 
+    else: da_str = default
+    if "CapEx" in keys: cap_ex_str = metrics.get("CapEx") 
+    else: cap_ex_str = default
+    if "NWC" in keys: nwc_str = metrics.get("NWC") 
+    else: nwc_str = default
+
+    D_AND_A_MARGIN = driver_ratio(data, "D&A")[da_str]
+    CAP_EX_MARGIN = driver_ratio(data, "CapEx")[cap_ex_str]
+    NWC_INTENSITY = driver_ratio(data, "NWC")[nwc_str]
+    
     if terminal_roic <= TERMINAL_GROWTH: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, NWC_INTENSITY]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
@@ -117,7 +131,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         capex = cur_rev * CAP_EX_MARGIN
         dnwc = (cur_rev - prev_rev) * NWC_INTENSITY
         fcf = nopat + da - capex - dnwc
-        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base})
+        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str})
         
         if i == years:
             cur_rev = rev[year]["Revenue"] * (1 + TERMINAL_GROWTH)
@@ -171,5 +185,5 @@ def roic(data: dict) -> dict:
     return value
 
 if __name__ == "__main__":
-    data = get_data("apple", 2016)
-    print(roic(data))
+    data = get_data("microsoft", 2016)
+    print(project_fcf(data, 10, roic(data)["ROIC_Median"]))

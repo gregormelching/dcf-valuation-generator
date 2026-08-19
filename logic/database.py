@@ -16,6 +16,7 @@ create_table = '''
             tag TEXT,
             form TEXT,
             end_date DATE,
+            filed DATE,
             UNIQUE(company, year, metric_name)
         );
         CREATE TABLE IF NOT EXISTS flags (
@@ -67,23 +68,24 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
                     tag = values[year][metric_name]["Tag"]
                     form = values[year][metric_name]["Form"]
                     end = values[year][metric_name]["End"]
+                    filed = values[year][metric_name].get("Filed")
                     cursor.execute("""
-                                   INSERT INTO data (company, year, metric_name, value, tag, form, end_date)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   INSERT INTO data (company, year, metric_name, value, tag, form, end_date, filed)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                                    ON CONFLICT(company, year, metric_name)
-                                   DO UPDATE SET value = EXCLUDED.value, tag = EXCLUDED.tag, form = EXCLUDED.form, end_date = EXCLUDED.end_date
+                                   DO UPDATE SET value = EXCLUDED.value, tag = EXCLUDED.tag, form = EXCLUDED.form, end_date = EXCLUDED.end_date, filed = EXCLUDED.filed
                                    RETURNING id"""
-                                   ,(company, year, metric_name, values[year][metric_name]["Value"], tag, form, end)
+                                   ,(company, year, metric_name, values[year][metric_name]["Value"], tag, form, end, filed)
                                    )
                     data_id = cursor.fetchone()[0] 
                 else:
                     cursor.execute("""
-                                   INSERT INTO data (company, year, metric_name, value, tag, form, end_date)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   INSERT INTO data (company, year, metric_name, value, tag, form, end_date, filed)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                                    ON CONFLICT(company, year, metric_name)
-                                   DO UPDATE SET value = EXCLUDED.value, tag = EXCLUDED.tag, form = EXCLUDED.form, end_date = EXCLUDED.end_date
+                                   DO UPDATE SET value = EXCLUDED.value, tag = EXCLUDED.tag, form = EXCLUDED.form, end_date = EXCLUDED.end_date, filed = EXCLUDED.filed
                                    RETURNING id"""
-                                   ,(company, year, metric_name, None, None, None, None)
+                                   ,(company, year, metric_name, None, None, None, None, None)
                                    )
                     data_id = cursor.fetchone()[0]
                 cursor.execute("DELETE FROM flags WHERE data_id = ?", (data_id,))
@@ -94,15 +96,15 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
 def get_data(company: str, start_year: int) -> dict:
     years = range(start_year, datetime.now().year)
     values = {}
-    query = "SELECT year, metric_name, value, tag, form, end_date, flag FROM data LEFT JOIN flags ON data.id = flags.data_id WHERE company = ?"
+    query = "SELECT year, metric_name, value, tag, form, end_date, filed, flag FROM data LEFT JOIN flags ON data.id = flags.data_id WHERE company = ?"
     with sqlite3.connect(database) as conn:
         cursor = conn.cursor()
         cursor.execute(query, (company,))
         for row in cursor.fetchall():
             if row[0] in years:
-                values.setdefault(row[0], {}).setdefault(row[1], {"Value": row[2], "Tag": row[3], "Form": row[4], "End": row[5], "Flag": []})
-                if not row[6] == None:
-                    values[row[0]][row[1]]["Flag"].append(row[6])
+                values.setdefault(row[0], {}).setdefault(row[1], {"Value": row[2], "Tag": row[3], "Form": row[4], "End": row[5], "Filed": row[6], "Flag": []})
+                if not row[7] == None:
+                    values[row[0]][row[1]]["Flag"].append(row[7])
         return values
 
 def insert_prices(symbol: str, freq: str, rows: list, adjusted: int) -> None: 
@@ -135,13 +137,13 @@ def get_rate(series: str, as_of: str) -> tuple | None:
         cursor.execute(query, (series, as_of))
         return cursor.fetchone()
 
-def get_prices(symbol: str, freq: str, n: int) -> list:
+def get_prices(symbol: str, freq: str, n: int, as_of: str) -> list:
     with sqlite3.connect(database) as conn:
         cursor = conn.cursor()
-        query = "SELECT date, close FROM prices WHERE symbol = ? AND freq = ? AND adjusted = 1 ORDER BY date DESC LIMIT ?"
-        cursor.execute(query, (symbol, freq, n))
+        query = "SELECT date, close FROM prices WHERE symbol = ? AND freq = ? AND adjusted = 1 AND date <= ? ORDER BY date DESC LIMIT ?"
+        cursor.execute(query, (symbol, freq, as_of, n))
         rows = cursor.fetchall()
-        if len(rows) < n: raise ValueError("Too few prices for the given symbol and frequency")
+        if len(rows) < n: raise ValueError(f"Too few prices for the given symbol and frequency as_of {as_of}")
         return sorted(rows)
 
 def insert_raw_download(symbol: str, freq: str, body: str, lib_version: str):
