@@ -1,4 +1,4 @@
-from model import project_fcf, TERMINAL_GROWTH, roic
+from model import project_fcf, TERMINAL_GROWTH
 from datetime import datetime
 from wacc_calculation import calc_wacc, N_MONTHS
 from database import get_data

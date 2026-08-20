@@ -201,7 +201,7 @@ decision `clean_values` had already made. `clean_values` now records `Tag`/`Form
 alongside `Value` while it sums, so provenance can no longer drift from the number, and the
 multi-slot branch in `insert_data` became dead code and was removed.
 
-### Phase 2 — Modeling core (3–4 days)
+### Phase 2 — Modeling core (3–4 days) — DONE
 - FCF projection (revenue growth assumptions, margin trajectory)
 - WACC (cost of equity via CAPM: beta, risk-free rate, equity risk premium from
   external sources; cost of debt from financial data)
@@ -1599,13 +1599,169 @@ SEC companyfacts response carries every vintage with its `filed` date, so the hi
 recoverable, it is simply not kept. Deliberately deferred past Phase 2: it costs more than every
 step so far and improves no valuation, it only protects future comparisons.
 
-#### Phase 2 — status
+#### Step 7 — the terminal value method, decided — DONE
 
-Steps 0 through 6b are done. What is left before the phase closes:
+Phase 2's scope line says "Terminal value (Gordon Growth vs. exit multiple, offer both)". This
+records the decision not to deliver the second one, and why that is not a shortcut.
 
-- **The Damodaran cross-check named in the learning goals has not been done.** WACC, terminal value
-  and the equity bridge were each derived and verified internally; none of them has been held
-  against an external reference. This is the explicit exit condition of the phase.
+**Gordon Growth is the only supported method.** `terminal_value(method="multiple")` stays in the
+code and stays reachable, but only when the caller supplies `exit_multiple` explicitly. No default
+is provided and no comparable-multiple source is wired.
+
+**There is no honest source for the multiple in this stack.** SEC EDGAR carries filings, not peer
+market data — an exit multiple needs a peer set, each peer's enterprise value and each peer's
+EBITDA on a comparable basis. yfinance could supply a per-ticker EV/EBITDA, but the peer set itself
+would be a hand-picked judgment call sitting nowhere in this file, which is exactly the pattern the
+project rules forbid. The alternative, a hardcoded constant, is not a second method at all: it is
+the same terminal assumption with a different label and a worse audit trail, because Gordon at
+least exposes `TERMINAL_GROWTH` and the terminal ROIC as named inputs that steps 4b and 5 argued
+for.
+
+**The deeper objection is circularity.** An exit multiple taken from today's market prices the
+terminal year at today's sentiment. Phase 5 then compares the model's value per share against the
+market price to look for a 40%+ deviation. A terminal value imported from the market cannot fail
+that test in an informative way — the model would be checking the market against itself.
+
+**`Implied_Multiple` is the inverse, and it is already built.** Rather than importing a multiple,
+`terminal_value` reports what the Gordon terminal value implies against the last explicit year's
+EBITDA (`EBIT + D&A` of year 10). That is the cross-check an interviewer actually asks for, and it
+runs in every valuation without a peer set. Measured at `as_of = 2026-08-19`, `start_year = 2016`,
+settings from `ASSUMPTIONS`, across the WACC band:
+
+| | WACC low | WACC base | WACC high | base WACC |
+|---|---|---|---|---|
+| Apple | 10.77x | 9.43x | 8.38x | 9.03% |
+| Microsoft | 10.28x | 8.80x | 7.69x | 9.18% |
+| P&G | 16.80x | 13.87x | 11.81x | 6.72% |
+| Boeing | 9.53x | 7.78x | 6.57x | 7.85% |
+| Tesla | 4.58x | 3.29x | 2.57x | 11.28% |
+
+**The ordering is right, the level is the open question.** P&G highest at the lowest WACC, Tesla
+lowest because a 4.59% EBIT margin produces little EBITDA to capitalise — both are what the inputs
+say. What has not been checked is whether 8-10x on Apple and Microsoft is defensible against where
+comparable large-cap names actually trade. If the market clears materially higher, the model is
+either conservative on the margin fade or the terminal growth of 2.5% is doing too little work, and
+`Implied_Multiple` is the number that surfaces it. **This is carried into the Damodaran cross-check
+as an explicit item**, not closed here — the cache holds no market multiples to test it against.
+
+#### Step 8 — the Damodaran cross-check — DONE
+
+The explicit exit condition of Phase 2. Every WACC component, the terminal multiple and the returns
+assumptions are now held against an external reference instead of only against each other.
+
+**The script sits in the root, not in `logic/`.** `2026-08-20-damodaran-check.py` imports from
+`logic/` and writes nothing back. It is a report, not a model input: no function in `logic/` reads
+`DAMODARAN`, and nothing in the valuation path changes because a row prints `GAP`. Keeping it
+outside the package is what guarantees that — the check can never quietly become an assumption.
+
+**The reference is pinned, both value and vintage.** `DAMODARAN` holds one row per company from the
+US industry datasets, `REFERENCE_VINTAGE = "January 2026"`, `REFERENCE_PULLED = "2026-08-20"`, plus
+`REFERENCE_SOURCES` with the six URLs the rows came from. Industry mapping: Apple →
+Computers/Peripherals (36 firms), Microsoft → Software System & Application (309), P&G → Household
+Products (110), Boeing → Aerospace/Defense (79), Tesla → Auto & Truck (33). `IMPLIED_ERP` carries
+4.46% as of 2026-01-05 against our `EQUITY_RISK_PREMIUM = 0.0428` pulled 2026-08-14 — the same
+series at two dates, so the 18bp is a vintage difference and not a disagreement.
+
+**The synthetic rating is computed, not copied.** `SPREADS` is Damodaran's full interest-coverage
+table for large caps; `interest_coverage` takes the newest year whose `OperatingIncome` and
+`InterestExpense` both survive the flag filter (yoy outliers removed, same rule as `cost_of_debt`),
+`synthetic_rating` maps it to a rating and `synthetic_cost_of_debt` returns `rf + spread`. That is
+the only row where the reference is a per-company figure rather than a sector average, and it is the
+one that found something.
+
+**Tolerances are declared in `METRICS`, per row**: 0.30 on both betas, 10pp on D/E and E/(D+E),
+200bp on cost of equity, cost of debt and WACC, 10pp on the effective tax rate, 15pp on ROIC, and 50%
+relative on the multiple. They are wide on purpose — the reference is a sector aggregate, so a
+narrow band would print `GAP` on every row and mean nothing. `NOTES` records the five
+non-comparabilities in the output itself.
+
+Measured at `as_of = 2026-08-19`, `start_year = 2016`, settings from `ASSUMPTIONS`:
+
+| | beta ours/ref | Ke ours/ref | WACC ours/ref | ΔWACC | EV/EBITDA ours/ref |
+|---|---|---|---|---|---|
+| Apple | 1.051 / 1.35 | 9.18% / 9.97% | 9.03% / 9.71% | -68bp | 9.43x / 25.42x |
+| Microsoft | 1.068 / 1.28 | 9.25% / 9.64% | 9.18% / 9.34% | -16bp | 8.80x / 24.48x |
+| P&G | 0.589 / 0.82 | 7.20% / 7.59% | 6.72% / 7.03% | -31bp | 13.87x / 13.17x |
+| Boeing | 1.110 / 0.95 | 9.43% / 8.17% | 7.85% / 7.60% | +25bp | 7.78x / 21.58x |
+| Tesla | 1.556 / 1.46 | 11.34% / 10.45% | 11.28% / 9.38% | +190bp | 3.29x / 47.76x |
+
+**The WACC machinery survives the check.** Four of five land within 70bp of the sector cost of
+capital, and Tesla's +190bp is the beta doing exactly what CAPM says it should. This is the first
+evidence that the CAPM path, the relevering and the weights are right rather than merely internally
+consistent — every earlier verification compared the model against itself.
+
+**Finding 1: the cost of debt is a legacy coupon, not a marginal rate.** Apple 2.71% and P&G 2.71%
+against a synthetic AAA of 5.08% at coverage of 29.06x and 22.55x — both 237bp low. Microsoft
+(+5bp) and Tesla (+42bp) agree, so this is not a broken function; it is a definitional gap.
+`cost_of_debt` measures interest expense over average debt, i.e. what the existing stack costs,
+while a forward-looking WACC wants what new debt would cost. Arithmetic on the printed weights, not
+re-run: switching to the synthetic rate moves Apple +4bp, P&G +16bp, Boeing (at a BBB spread of
+1.11%) +21bp. **Decide the basis or defer it explicitly; do not leave it undecided a second time
+like the window question in step 3a.**
+
+**Finding 2: Boeing's cost of debt is measured off a stale, unusable year.** The newest year with
+both figures clean is 2023, and its EBIT is negative, so coverage is -0.31x → D2/D → a synthetic
+23.68%. The number itself is nonsense as a forward rate, but the signal is not: Boeing carries the
+highest debt weight of the five (26.85%) and is the one company whose cost of debt the model has no
+usable evidence for. Its 4.73% is the least defensible input in the whole set.
+
+**Finding 3: the terminal multiple gap is real and is not explained by the fade argument alone.**
+Step 7 left this open. Apple 9.43x against 25.42x and Microsoft 8.80x against 24.48x are not
+"somewhat below" a current market multiple, they are a third of it. Part of that is structural — the
+Gordon terminal value prices a business already faded to 2.5% growth ten years out, so it must sit
+below a trailing multiple on a still-growing company. But a factor of 2.5x is more than the fade
+buys. P&G is the control case: at 13.87x against 13.17x it agrees almost exactly, and P&G is the
+one company already close to mature. Tesla at 3.29x against 47.76x is the same effect at the
+extreme, plus a 4.59% EBIT margin producing little EBITDA. **Read: the model is materially more
+conservative than the market on companies still growing, and the terminal assumptions are where
+that lives.** This is the input for the Phase 3 sensitivity axes, and the honest framing for Phase 5
+— a 40%+ deviation from market price is close to guaranteed for Apple and Microsoft, and it will be
+the terminal block producing it, not the explicit window.
+
+**Rows that print `GAP` and should be ignored.** The effective tax rate on every company (the
+reference averages loss-makers into the sector rate — 5.91% for Computers/Peripherals is not a
+number any profitable large cap could match; `MARGINAL_TAX_RATE = 25%` is the comparable figure).
+Boeing's D/E and E/(D+E) at 36.71% against 15.56% (a single distressed balance sheet against a
+sector average). Tesla's unlevered beta at 1.820 against 1.310 (our 0.70% D/E barely unlevers, the
+sector's 19.70% does). P&G's unlevered beta at 0.360 against 0.740, the same effect with the sign
+reversed. Boeing's ROIC of -9.72% is a fact about Boeing, not about the function.
+
+**One row could not be checked at all.** Apple's `ROIC_Median` returns `Insufficient` — invested
+capital goes non-positive in the window, so the median is never formed and the script prints `n/a`
+rather than a substitute. The terminal ROIC of 20% assumed for Apple therefore still stands on the
+step 4b argument alone and has no measured company-level counterpart; the sector's 44.76% is the
+only external anchor, and it is above the assumption, i.e. the assumption is the conservative side.
+
+#### Phase 2 — CLOSED
+
+Steps 0 through 8 are done, including the Damodaran cross-check that was the phase's stated exit
+condition. The phase is closed as of 2026-08-20.
+
+**The closing test was not "nothing is left open" — it was "nothing left open is structural."** Every
+residual below is a numeric-value question with a measured size in basis points. None of them
+changes a function signature, a return shape, or a dict key, so re-opening one later costs the same
+as doing it now. That is the whole justification for moving on, and it is the reason the two items
+that *were* structural (point-in-time filings, the exit multiple) were decided rather than deferred:
+step 6b scoped and rejected the first, step 7 closed the second.
+
+**Carried forward out of Phase 2, with a deadline.** All of these must be closed — resolved or
+explicitly rejected in writing — **before Phase 4**, because a dashboard freezes the output format
+and makes changes to `logic/` visible in a way that turns cheap edits expensive:
+
+1. **Realised versus marginal cost of debt** (step 8, finding 1). Apple +4bp, P&G +16bp, Boeing
+   +21bp on WACC if switched to the synthetic rate, arithmetic on the printed weights. Either wire
+   `synthetic_cost_of_debt` into `wacc_calculation.py` as the basis, or record that the realised
+   rate stays and why.
+2. **Boeing's cost of debt has no usable evidence** (step 8, finding 2). Newest clean year is 2023
+   with negative EBIT, coverage -0.31x, synthetic D2/D at 23.68%. Highest debt weight of the five
+   (26.85%) and the least defensible single input in the set.
+3. **Prices have no staleness bound** (below). Max 30bp on the equity weight, measured.
+4. **The fade start is unfiltered, the fade target is not** (step 4c).
+
+- **CLOSED — the Damodaran cross-check** (step 8). WACC within 70bp of the sector cost of capital
+  for four of five companies, ERP within 18bp of the same source at a different date, and three
+  findings carried forward: the cost-of-debt basis, Boeing's unusable cost of debt, and the
+  terminal multiple gap (into Phase 3).
 - **The filing vintage is labelled but not pinned.** All three vintage leaks are now visible: the
   rate is served from the `rates` table under `as_of`, prices are bounded by `date <= as_of` (step
   6a), and every valuation reports the newest filing it stands on as `Data_Filed` (step 6b). Only
@@ -1615,10 +1771,10 @@ Steps 0 through 6b are done. What is left before the phase closes:
   73.15%, P&G 91.13% → 90.75%, Apple 97.91% → 97.88%, Tesla 99.26% → 99.31%, Microsoft unchanged —
   taking Boeing's WACC 7.81% → 7.85% and its value per share 80.54 → 79.82. Full point-in-time is
   scoped and deferred past Phase 2 (step 6b).
-- **The exit-multiple path is built and never used.** `terminal_value(method="multiple")` requires
-  an `exit_multiple` the caller must supply, and no comparable-multiple source exists. Phase 2's
-  scope says "offer both". Either wire a source or write down that Gordon is the only supported
-  method and why.
+- **CLOSED — Gordon is the only supported terminal value method** (step 7). No comparable-multiple
+  source is wired, the reasoning is on record, and `Implied_Multiple` carries the cross-check
+  instead. One item moves from here into the Damodaran step: whether the implied 8-10x on Apple and
+  Microsoft is defensible against where those names actually trade.
 - **CLOSED — the per-company settings are enforced.** Measured cost of the old hole, kept on record:
   calling `dcf_value` without `**ASSUMPTIONS[symbol]` returned Apple 116.48 against 132.93, P&G
   112.98 against 142.98, Boeing 64.17 against 48.01, Microsoft 275.16 against 286.77, and Tesla
@@ -1638,15 +1794,15 @@ Steps 0 through 6b are done. What is left before the phase closes:
   Apple would be 121.68 against 132.93. And `resolve_assumptions` validates domains, not decisions:
   it cannot check the values against the tables in steps 2c-1, 4b, 4c and 4e. `ASSUMPTIONS` staying
   the single source is the only guard against drift.
-- **CLOSED for monthly, open for weekly.** The earlier note here said `as_of` could not move back
+- **CLOSED — the price cache carries real `as_of` headroom.** The earlier note here said `as_of` could not move back
   "more than a few months". Measured, the headroom was zero: with exactly 61 monthly rows
   (2021-07-31 to 2026-07-31) `as_of = 2026-07-31` ran and `2026-07-30` already raised `Too few
   prices`. The two `closes.iloc[-N:]` lines are gone from `fetch_prices`, so the full
   `PERIOD = "7y"` download reaches `insert_prices` and `get_prices` does the cutting via `LIMIT`.
-  Rerun for all six symbols at `"1mo"`: 84 rows from 2019-08-31, and `as_of` now carries back to
-  2024-08-31. **`"1wk"` has not been rerun** — still 105 rows from 2024-08-09, i.e. zero headroom on
-  the weekly path, which `raw_beta` serves and Phase 3 needs as the robustness check against the
-  monthly beta. Expected after that rerun: roughly 364 weekly rows.
+  Rerun for all six symbols in both frequencies: 84 monthly rows from 2019-08-31 and 365 weekly rows
+  from 2019-08-23, against 61 and 105 before. `as_of` now carries back to 2024-08-31 on the monthly
+  path, which is what `raw_beta` and `debt_to_equity` need, and the weekly path has the depth Phase
+  3 wants for the robustness check against the monthly beta.
 - **Prices have no staleness bound**, unlike the rate path with `RF_MAX_AGE_DAYS` (step 3a-1). The
   gap is live, not hypothetical: at `as_of = 2026-08-19` the newest close for all six symbols is
   2026-07-31, 19 days old, while the rate is held to ten — the valuation mixes an 2026-08-14 rate
@@ -1667,8 +1823,36 @@ Steps 0 through 6b are done. What is left before the phase closes:
 - **Boeing's NWC intensity is not stationary** (step 4d; step 4e could not fix it with a window
   choice, so it becomes a Phase 3 sensitivity axis).
 
+### Phase order from here — 3, 5, 6, 4, 7
+
+Decided 2026-08-20, replacing the original numeric order. The numbering of the phases below stays
+as written; only the sequence changes.
+
+- **3 before 5, but 5 immediately after.** The football field needs the current market price as a
+  reference bar anyway, and the prices are already in the cache — so Phase 5's core question falls
+  out of Phase 3 at almost no extra cost. Step 8 already tells us what it will say: Apple and
+  Microsoft will land far below market, and the terminal block will be the cause. The sensitivity
+  is what distinguishes "reachable with plausible inputs" (adjust the assumption) from "only
+  reachable with implausible ones" (a model statement worth defending).
+- **6 before 4.** Step 4d is the argument: one line indented one level too far took Boeing from
+  48.01 to -29.90, a sign flip, and it surfaced only through manual recomputation. Phase 3 iterates
+  over `project_fcf` and `dcf_value` constantly — the two functions involved. Five golden-value
+  tests at a fixed `as_of` (Apple 132.93, Microsoft 286.77, P&G 142.98, Tesla 11.58, Boeing 48.01)
+  would have caught it on the spot.
+- **4 last before the documentation.** A dashboard freezes the output format; if Phase 5 overturns
+  an assumption, the presentation gets built twice. This is also the deadline for the four items
+  carried out of Phase 2.
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
+- The current market price belongs in the output as a reference bar, not just the value range
+  (see the phase order note above).
+- Carried in from step 8: the terminal block is where the conservatism sits (implied 8-10x against
+  a sector 24-25x on Apple and Microsoft). Terminal growth and the EBIT margin fade are the two
+  axes that move it; `Implied_Multiple` is the readout that makes the sensitivity legible against
+  an external number rather than only against itself.
+- Carried in from step 4d/4e: Boeing's NWC intensity is not stationary, so NWC intensity is a
+  Boeing-specific axis, not a shared one.
 - Optional: Monte Carlo simulation over uncertain inputs for a valuation range
 
 **Learning goals:** master sensitivity analysis as a valuation tool; for Monte Carlo,
