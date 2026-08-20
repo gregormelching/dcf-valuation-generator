@@ -132,6 +132,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         dnwc = (cur_rev - prev_rev) * NWC_INTENSITY
         fcf = nopat + da - capex - dnwc
         value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str})
+        prev_rev = cur_rev
         
         if i == years:
             cur_rev = rev[year]["Revenue"] * (1 + TERMINAL_GROWTH)
@@ -144,7 +145,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
             reinvestment = nopat * reinvestment_rate
             fcf = nopat - reinvestment
             value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic, "Tax_Rate": MARGINAL_TAX_RATE, "Margin_Base": margin_base})
-        prev_rev = cur_rev
+        
     return value
     
 def roic(data: dict) -> dict:

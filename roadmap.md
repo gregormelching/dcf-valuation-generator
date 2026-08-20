@@ -1493,6 +1493,35 @@ more than NOPAT produces. The guard makes that visible instead of dressing it up
 and exists for a loss-making company under `margin_base = "Last"`, and to keep the division from
 raising on an exactly zero denominator.
 
+#### Step 3a-1 — the risk-free rate pinned to `as_of` — DONE
+
+Built during the step 6a work and committed without a write-up (`c5011c3`); recorded here because
+it belongs topically to step 3a, not to the price pinning.
+
+**The rate is cached, not fetched per valuation.** `fetch_rates` pulls the full FRED `DGS10` series
+(16,140 rows back to 1962-01-02) and writes it into a `rates` table keyed `UNIQUE(series, date)`
+with a `fetched_at` column. `get_rate(series, as_of)` returns the newest row with `date <= as_of`,
+the same shape `get_prices` later adopted. Without the cache every valuation hit FRED, and a rerun
+of the same `as_of` could return a different number.
+
+**Why `date <= as_of` and not the exact date.** `DGS10` has no row on weekends and holidays. An
+exact-date lookup fails on roughly three days in ten, and the failure is not informative — the rate
+simply was not published that day.
+
+**`RF_MAX_AGE_DAYS = 10` is the staleness bound.** `risk_free_rate` computes the gap between
+`as_of` and the returned row's date; if it exceeds ten days it refetches once, and if it still
+exceeds ten days it raises rather than returning the stale number. Ten days covers the longest
+gap the series actually produces — a weekend plus a holiday plus a missing print — while still
+catching the real failure case, which is a cache that has not been refreshed in months. Measured
+sensitivity at `as_of = 2026-08-19`: the rate moves 4.75% (2026-07-31) to 4.68% (2026-08-14), which
+takes Boeing's WACC 7.90% to 7.85% and Apple's 9.09% to 9.03%. Three weeks of drift is worth about
+5bp of WACC — small enough that a bound is a guard against neglect, large enough that silently
+serving a year-old rate would not be acceptable.
+
+**The refetch is unconditional on the miss, not incremental.** `fetch_rates` rewrites all 16,140
+rows on every refresh. At this size that is cheaper than tracking a watermark, and it means a FRED
+revision to a historical print propagates instead of being pinned to whatever was first cached.
+
 #### Step 6a — prices pinned to `as_of` — DONE
 
 **The second of the two vintage leaks is closed.** `get_prices` takes `as_of` and bounds the window
@@ -1590,20 +1619,50 @@ Steps 0 through 6b are done. What is left before the phase closes:
   an `exit_multiple` the caller must supply, and no comparable-multiple source exists. Phase 2's
   scope says "offer both". Either wire a source or write down that Gordon is the only supported
   method and why.
-- **The per-company settings are wired but not enforced.** `ASSUMPTIONS` in `valuation.py` now
-  carries growth base, `terminal_roic`, `margin_base` and `metrics` for all five companies, and
-  `__main__` unpacks it against `start_year = 2016` and an explicit `as_of`. What is missing is the
-  link back to this file: nothing checks the dict against the tables in steps 2c-1, 4b, 4c and 4e,
-  and `dcf_value`'s own defaults still describe the pre-4c model (`margin_base = "Driver_Ratio"`,
-  `terminal_roic = None` falling back to WACC). A call that forgets to unpack `ASSUMPTIONS` returns
-  a number that looks valid and is not the decided basis.
-- **The cached price history is 61 monthly rows deep**, so `as_of` cannot be moved back more than a
-  few months without starving the beta window (step 6a). `fetch_prices` truncates to `N_MONTHS`
-  before the insert; keeping the full `PERIOD` download would fix it.
-- **Prices have no staleness bound**, unlike the rate path with `RF_MAX_AGE_DAYS` (step 6a).
-- **The rate-pinning work has no step section in this file.** `database.py`'s `rates` table,
-  `get_rate`, `risk_free_rate(as_of)` and the `RF_MAX_AGE_DAYS` bound were built and committed
-  without a write-up, so the only record of why the staleness bound is ten days is the code.
+- **CLOSED — the per-company settings are enforced.** Measured cost of the old hole, kept on record:
+  calling `dcf_value` without `**ASSUMPTIONS[symbol]` returned Apple 116.48 against 132.93, P&G
+  112.98 against 142.98, Boeing 64.17 against 48.01, Microsoft 275.16 against 286.77, and Tesla
+  23.13 against 11.58 — a doubling, with no exception raised anywhere. `resolve_assumptions(symbol,
+  base, terminal_roic, margin_base, metrics)` in `valuation.py` now copies the company entry,
+  applies only the non-`None` overrides, copies the nested `metrics` dict afterwards so a caller
+  cannot mutate `ASSUMPTIONS`, and validates the four value domains before returning. `dcf_value`
+  calls it as its first statement and its four settings parameters default to `None`. Verified at
+  `as_of = 2026-08-19` with no settings argument: Apple 132.93, Microsoft 286.77, P&G 142.98, Tesla
+  11.58, Boeing 48.01 — the step 5 table reproduces exactly. Override path verified too:
+  `margin_base = "Mean_Last_Three"` takes Tesla to 20.30 at an EBIT margin target of 9.53%.
+  Rejected as expected: unknown symbol, `base = "Mean"`, `metrics = {"NWC": "Last"}` (value),
+  `metrics = {"Foo": ...}` (key), `terminal_roic = 0.01` (below terminal growth).
+  Two consequences worth knowing. `None` as "no override" makes `terminal_roic = None` unable to
+  request the WACC fallback in `dcf_value`, so that branch is now unreachable for the five —
+  acceptable because step 4b gave all of them an explicit ROIC; measured cost of that path for
+  Apple would be 121.68 against 132.93. And `resolve_assumptions` validates domains, not decisions:
+  it cannot check the values against the tables in steps 2c-1, 4b, 4c and 4e. `ASSUMPTIONS` staying
+  the single source is the only guard against drift.
+- **CLOSED for monthly, open for weekly.** The earlier note here said `as_of` could not move back
+  "more than a few months". Measured, the headroom was zero: with exactly 61 monthly rows
+  (2021-07-31 to 2026-07-31) `as_of = 2026-07-31` ran and `2026-07-30` already raised `Too few
+  prices`. The two `closes.iloc[-N:]` lines are gone from `fetch_prices`, so the full
+  `PERIOD = "7y"` download reaches `insert_prices` and `get_prices` does the cutting via `LIMIT`.
+  Rerun for all six symbols at `"1mo"`: 84 rows from 2019-08-31, and `as_of` now carries back to
+  2024-08-31. **`"1wk"` has not been rerun** — still 105 rows from 2024-08-09, i.e. zero headroom on
+  the weekly path, which `raw_beta` serves and Phase 3 needs as the robustness check against the
+  monthly beta. Expected after that rerun: roughly 364 weekly rows.
+- **Prices have no staleness bound**, unlike the rate path with `RF_MAX_AGE_DAYS` (step 3a-1). The
+  gap is live, not hypothetical: at `as_of = 2026-08-19` the newest close for all six symbols is
+  2026-07-31, 19 days old, while the rate is held to ten — the valuation mixes an 2026-08-14 rate
+  with a 2026-07-31 market cap and reports neither fact. Measured size before spending time on it:
+  a full month of price staleness moves the equity weight by at most 30bp (Microsoft -29.9bp at a
+  +24.6% monthly move, Tesla +17.9bp at -26.0%, Boeing +3.0bp), because the weights sit at 73-99%
+  equity and barely respond. The value is closing the last hole in the vintage chain, not accuracy.
+  The bound must be wider than the rate's ten days — monthly data needs roughly 45.
+- **CLOSED — `prev_rev` in `project_fcf`** (step 4d). The assignment now sits immediately before the
+  `if i == years` block, so it no longer picks up the terminal revenue. Worth keeping on record
+  because the first attempt moved it one level in rather than one line up, which put it inside
+  `if i == years`: every projected year then measured its revenue delta against the last actual
+  year, `dNWC` compounded to -2.17 / -4.33 / -6.44 / -8.51 / -10.50bn at Apple, and value per share
+  went Apple 132.93 to 136.75, Microsoft 286.77 to 298.08, Tesla 11.58 to 11.74, P&G 142.98 to
+  143.67 and **Boeing 48.01 to -29.90**, a sign flip. Apple's `dNWC` now runs -2.17 / -2.15 / -2.12
+  / -2.06 / -1.99bn and all five values reproduce the step 5 table.
 - **The fade start is unfiltered, the fade target is not** (step 4c, still open).
 - **Boeing's NWC intensity is not stationary** (step 4d; step 4e could not fix it with a window
   choice, so it becomes a Phase 3 sensitivity axis).

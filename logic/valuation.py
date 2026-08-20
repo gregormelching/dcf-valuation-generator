@@ -36,6 +36,25 @@ ASSUMPTIONS = {
     },
 }
 
+def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None) -> dict:
+    if symbol not in ASSUMPTIONS: raise ValueError(f"Symbol {symbol} is not in ASSUMPTIONS.")
+    
+    settings = dict(ASSUMPTIONS[symbol])
+    
+    for k, v in [("base", base), ("terminal_roic", terminal_roic), ("margin_base", margin_base), ("metrics", metrics)]:
+        if v is None: continue
+        settings[k] = v
+    
+    settings["metrics"] = dict(settings["metrics"]) if settings["metrics"] is not None else None
+    
+    if settings["base"] not in ["Growth_Rate_Median", "Growth_Rate_Mean", "Mean_Last_Three"]: raise ValueError(f"{settings["base"]} not found in valid bases.")
+    if settings["margin_base"] not in ["Driver_Ratio", "Mean_Last_Three", "Last"]: raise ValueError(f"{settings["margin_base"]} not found in valid margin bases.")
+    if not isinstance(settings["terminal_roic"], (int, float)) or settings["terminal_roic"] <= TERMINAL_GROWTH: raise ValueError(f"Terminal ROIC {settings["terminal_roic"]} is not valid.")
+    if settings["metrics"] is not None and any(key not in ["D&A", "CapEx", "NWC"] for key in settings["metrics"]): raise ValueError(f"Invalid metric key in {sorted(settings["metrics"])}.")
+    if settings["metrics"] is not None and any(value not in ["Driver_Ratio", "Mean_Last_Three"] for value in settings["metrics"].values()): raise ValueError(f"Invalid metric value in {sorted(settings["metrics"].values())}.")
+
+    return settings
+
 def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
     last_explicit = sorted(fcf)[-2]
     tv_row = sorted(fcf)[-1]
@@ -57,7 +76,12 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
     return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
     
 
-def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = "Growth_Rate_Median", method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str = "Driver_Ratio", metrics: dict = None) -> dict:
+def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None) -> dict:
+    settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics)
+    base = settings["base"]
+    terminal_roic = settings["terminal_roic"]
+    margin_base = settings["margin_base"]
+    metrics = settings["metrics"]
     value = {}
     as_of_str = as_of
     if as_of is None: as_of = datetime.now()
@@ -110,4 +134,4 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
 
 if __name__ == "__main__":
     symbol = "apple"
-    print(dcf_value(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-19", **ASSUMPTIONS[symbol]))
+    dcf_value(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-19")

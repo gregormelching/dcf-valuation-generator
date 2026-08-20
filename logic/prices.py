@@ -38,8 +38,6 @@ def fetch_prices(symbol: str, freq: str) -> list:
     if returns.min() <= MAX_SPLIT_DROP: raise ValueError("Data contains too much drop")
     
     if (freq == "1wk" and len(closes) < N_WEEKS) or (freq == "1mo" and len(closes) < N_MONTHS): raise ValueError("Not enough data for the calculation")
-    if freq == "1mo": closes = closes.iloc[-N_MONTHS:]
-    elif freq == "1wk": closes = closes.iloc[-N_WEEKS:]
     
     rows = []
     for row in closes.items():
@@ -77,4 +75,5 @@ def risk_free_rate(as_of = None):
     return {"Risk_Free_Rate": row[1], "Date": row[0], "Source": f"FRED {RF_SERIES}", "Fetched_At": row[2], "As_Of": as_of}
  
 if __name__ == "__main__":
-    print(risk_free_rate())
+    for s in SYMBOLS:
+        fetch_prices(s, "1wk")
