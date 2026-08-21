@@ -3,12 +3,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "logic"))
 
-from database import get_data
-from model import effective_tax_rate, roic, MARGINAL_TAX_RATE
-from prices import risk_free_rate
-from wacc_calculation import calc_wacc, adjusted_beta, cost_of_debt, EQUITY_RISK_PREMIUM, COD_FALLBACK_START_YEAR
-from valuation import dcf_value, ASSUMPTIONS
-from validation import OUTLIER_RULES
+from logic.database import get_data
+from logic.model import effective_tax_rate, roic, MARGINAL_TAX_RATE
+from logic.prices import risk_free_rate
+from logic.wacc_calculation import calc_wacc, adjusted_beta, cost_of_debt, EQUITY_RISK_PREMIUM, COD_FALLBACK_START_YEAR
+from logic.valuation import dcf_value, ASSUMPTIONS
+from logic.validation import OUTLIER_RULES
 
 REFERENCE_VINTAGE = "January 2026"
 REFERENCE_PULLED = "2026-08-20"

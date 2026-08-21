@@ -1843,6 +1843,65 @@ as written; only the sequence changes.
   an assumption, the presentation gets built twice. This is also the deadline for the four items
   carried out of Phase 2.
 
+#### Step 9 — the golden-value tests — DONE
+
+A slice of Phase 6 pulled forward, ahead of Phase 3. The argument is step 4d: one line indented one
+level too far took Boeing from 48.01 to -29.90, a sign flip, and nothing raised — it surfaced only
+through manual recomputation. Phase 3 iterates on `project_fcf` and `dcf_value` constantly, the two
+functions involved. The rest of Phase 6 (formulas in isolation, edge cases, CI) stays where it is.
+
+**What the test does and does not claim.** It freezes the output verified as correct today and
+compares against it after every change. It does not say 132.93 is right; it says the last edit did
+not move 132.93 unnoticed.
+
+`tests/conftest.py` puts `logic/` on `sys.path` — absolute, built from `Path(__file__).resolve()`,
+and passed as `str`. The modules import each other flat (`valuation.py` does `from model import
+project_fcf`), so the repo root on the path is not enough: `logic/` itself has to be on it. A `Path`
+object is silently ignored by the import machinery, which surfaces as `ModuleNotFoundError` rather
+than as a type error.
+
+`tests/test_golden_values.py` holds `GOLDEN` — five symbols against `Value_Per_Share`, `WACC`, `EV`,
+`Low`, `High`, `Implied_Multiple`, `TV_Share`, `Data_Filed` at full float precision — and one
+module-scoped fixture parametrised over the symbols, so `dcf_value` runs five times rather than 35.
+Seven test functions, 35 cases, all green at `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`,
+`freq = "1mo"`, `n = N_MONTHS`, no settings argument. The values reproduce the step 5 table exactly.
+
+Decisions worth keeping:
+
+- **`AS_OF` is hard-wired, not `datetime.now()`.** Without it `dcf_value` takes the current date, the
+  stub moves daily and the suite is red tomorrow with no code change. This is the single line that
+  makes the test reproducible.
+- **`rel = 1e-9`, not exact equality.** A real logic error moves percent, not the ninth decimal.
+  Exact equality would go red on a harmless reordering of the summation in `project_fcf`.
+- **`Data_Filed` is its own test.** The filings are still not point-in-time pinned. A re-ingest moves
+  the numbers legitimately — measured, Boeing 80.54 to 79.82. If only this test fails, the data base
+  moved and the golden values are to be reset; if it holds and others fail, it is code.
+- **Tesla's `TV_Share` is asserted as `is None`, not with `approx`.** Its `PV_Explicit` is negative in
+  all three WACC rows. `pytest.approx(None)` raises, so the test would break itself. If a number ever
+  appears there, the FCF projection changed structurally — the step 4d error class, stop immediately.
+- **`EV` is asserted on the base row only.** It is computed inside the WACC loop and differs per row
+  by construction (Tesla `wacc_low` 18.60bn against `wacc` 7.55bn). `Value_Per_Share` already carries
+  the band via `Low`/`High`; a second set of EV goldens would add maintenance, not signal.
+  `Data_Filed` is the opposite case: computed once outside the loop, identical in all three rows.
+
+**The rule for resetting the golden values: only together with a roadmap entry saying why.** Phase 3
+will move them legitimately the moment an assumption changes. Without the rule, resetting becomes a
+reflex and the test is dead.
+
+**Two failure modes found while building it, both of which leave a suite that cannot fail.**
+`pytest.approx` called as a statement rather than on the right-hand side of an `assert` asserts
+nothing. And a golden value compared against the wrong dict key raises `KeyError`, which reads like a
+broken test rather than a broken model. Both are why the mutation probe is part of the procedure:
+change one digit in a golden value, confirm exactly one case goes red, revert. Verified on Tesla's
+`Implied_Multiple`.
+
+**Open, deliberately deferred to Phase 6.** Every test depends on `storage/values.db`, which is
+gitignored — they will not run in GitHub Actions as they stand. Either a checked-in mini fixture
+cache or a `skipif` on the database's existence; decide it in Phase 6, not before. Second, minor:
+`requirements.txt` is UTF-16 from `pip freeze >` in PowerShell — harmless locally, a candidate for
+`Invalid requirement` in CI, to be verified once in a fresh venv.
+
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - The current market price belongs in the output as a reference bar, not just the value range
