@@ -1902,6 +1902,90 @@ cache or a `skipif` on the database's existence; decide it in Phase 6, not befor
 `Invalid requirement` in CI, to be verified once in a fresh venv.
 
 
+#### Step 10 — the two sensitivity axes, injectable — DONE
+
+`TERMINAL_GROWTH` was a module constant read at five live sites across two modules, so `g` could not
+be varied at all. It is now a parameter with `TERMINAL_GROWTH` as the default, threaded through
+`project_revenue`, `project_fcf`, `terminal_value`, `resolve_assumptions` and `dcf_value`. A second
+parameter `wacc_offset` (default `0.0`) is added to all three WACC rows in `dcf_value` right after
+`calc_wacc`. Both are appended at the end of every signature, because the call chain passes
+positionally — a parameter inserted in the middle silently shifts the meaning of existing arguments
+without raising. All 35 golden-value tests stay green, which is what the parameters had to prove.
+
+**Threading `g` fully rather than only into the Gordon denominator is a correctness decision, not a
+magnitude one.** `g` enters at three places that pull in different directions: the revenue growth
+fade target in `project_revenue`, the terminal revenue step, and `reinvestment_rate = g /
+terminal_roic`. Measured at `g = 3.5%`, the shortcut of varying only the denominator gives Apple
+144.66 against 146.27 fully threaded and Boeing 62.91 against 60.40 — single-digit percent, and the
+sign of the error differs per company. Small, but wrong in a way no test would surface.
+
+Measured `Value_Per_Share` on the `wacc` row, `as_of = 2026-08-19`, `wacc_offset = 0`:
+
+| Symbol | g=1.5% | g=2.0% | g=2.5% (base) | g=3.0% | g=3.5% |
+|---|---|---|---|---|---|
+| apple | 122.62 | 127.48 | 132.93 | 139.13 | 146.27 |
+| microsoft | 261.60 | 273.45 | 286.77 | 301.92 | 319.37 |
+| procter_gamble | 122.69 | 131.85 | 142.98 | 156.85 | 174.73 |
+| tesla | 11.31 | 11.44 | 11.58 | 11.73 | 11.88 |
+| boeing | 39.38 | 43.34 | 48.01 | 53.59 | 60.40 |
+
+**The grid design, decided.** `WACC_OFFSETS = (-0.02, -0.01, 0.0, 0.01, 0.02)` and
+`TERMINAL_GROWTHS = (0.015, 0.02, 0.025, 0.03, 0.035)` as module constants in `valuation.py`, tuples
+so a caller cannot mutate them. `sensitivity_grid` returns a flat dict keyed by the tuple
+`(wacc_offset, terminal_growth)`; the nested `offset -> g -> cell` shape was rejected because every
+consumer (rendering, Excel, dashboard) wants one row per cell, and the axes are already available as
+the constants.
+
+- **The WACC axis is absolute offsets, not percentage steps.** `calc_wacc` already produces a
+  Low/High band in basis points; offsets stay comparable with it, relative steps do not.
+- **The cell reads the `wacc` row only, not the band.** `wacc_low`/`wacc_high` are a second WACC axis
+  and would measure the same thing twice in a matrix whose first axis is already the WACC. The
+  side effect is that a cell dies if any of the three rows violates `wacc > g`, even when the row
+  actually read is computable — P&G at `wacc_offset = -0.02` with `g = 4%` raises from the
+  `wacc_low` row at 3.988% while the base row sits at 4.724%. Inside the chosen axes this never
+  fires: zero dead cells across all five companies.
+- **A dead cell keeps `Value_Per_Share = None` and carries the reason in `Status`.** No substitute
+  value, in line with the project convention that absence stays visible. Only `ValueError` is caught;
+  anything else is a bug and must propagate.
+- **No settings overrides on the grid function.** `ASSUMPTIONS` stays the single source. An override
+  parameter here would invite comparing cells computed under different assumptions inside one
+  matrix. The third axis Phase 3 still needs — the EBIT margin fade, and NWC intensity for Boeing —
+  gets its own function rather than more parameters on this one.
+- **No caching of `calc_wacc` across cells.** Measured: 125 cells (5 companies x 5 x 5) in 0.8s,
+  roughly 7ms per cell, because everything hits the SQLite cache. Hoisting `calc_wacc` out of
+  `dcf_value` would be complexity for nothing.
+
+**The grid answers the Phase 5 question before Phase 5 starts, and the answer is uncomfortable.**
+Newest cached close at `as_of = 2026-08-19` is 2026-07-31 for all five. Against the best cell in the
+whole matrix (`wacc_offset = -0.02`, `g = 3.5%`):
+
+| Symbol | base 132.93-style value | best cell | market 2026-07-31 | closes? |
+|---|---|---|---|---|
+| apple | 132.93 | 215.44 | 308.64 | no |
+| microsoft | 286.77 | 487.48 | 464.72 | only in the extreme corner |
+| procter_gamble | 142.98 | 444.79 | 144.49 | already matches at base |
+| tesla | 11.58 | 14.53 | 311.21 | no, by a factor of 21 |
+| boeing | 48.01 | 155.17 | 216.14 | no |
+
+Read: the sensitivity is not what closes the gap. P&G — the one mature company — matches the market
+at the base assumptions with an implied multiple of 13.87x against a sector 13.17x, which says the
+machinery is sound. Apple and Microsoft need the entire WACC and growth range exhausted at once and
+still fall short or only just arrive, and the P&G corner at 444.79 with a 45.55x implied multiple is
+numerically valid and economically meaningless — `wacc - g` collapses to 1.22% there. Corner cells of
+this matrix are not scenarios; they are the boundary where Gordon stops behaving.
+
+**Tesla's number is not a valuation.** 11.58 against a market of 311.21, with `PV_Explicit` negative
+in all three WACC rows and a 4.59% EBIT margin producing almost no EBITDA. The grid moves it between
+10.24 and 14.53 — the axes are irrelevant to it. The honest conclusion for Phase 5 and the README is
+that a classic FCF DCF has nothing to say about this company at its current margin, not that Tesla is
+overvalued by 96%.
+
+**What this hands to the next step.** The gap sits where step 8 said it does, in the terminal block,
+and neither WACC nor `g` reaches it. That points at the EBIT margin fade in `project_revenue` /
+`project_fcf` and at the unfiltered fade start from step 4c — the last carried-forward item that
+still moves a number rather than basis points.
+
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - The current market price belongs in the output as a reference bar, not just the value range

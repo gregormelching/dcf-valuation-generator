@@ -36,6 +36,9 @@ ASSUMPTIONS = {
     },
 }
 
+WACC_OFFSETS = (-0.02, -0.01, 0.0, 0.01, 0.02)
+TERMINAL_GROWTHS = (0.015, 0.02, 0.025, 0.03, 0.035)
+
 def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
     if symbol not in ASSUMPTIONS: raise ValueError(f"Symbol {symbol} is not in ASSUMPTIONS.")
     
@@ -131,6 +134,37 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset}
         
     return value
+
+def sensitivity_grid(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, offset: tuple = WACC_OFFSETS, growths: tuple = TERMINAL_GROWTHS):
+    grid = {}
+    
+    for o in offset:
+        for g in growths:
+            try: 
+                dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, terminal_growth = g, wacc_offset = o)
+                dct = {
+                    "Value_Per_Share": dcf["wacc"]["Value_Per_Share"],
+                    "Implied_Multiple": dcf["wacc"]["Implied_Multiple"],
+                    "TV_Share": dcf["wacc"]["TV_Share"],
+                    "WACC": dcf["wacc"]["WACC"],
+                    "Terminal_Growth": g,
+                    "Offset": o,
+                    "Status": "Calculated"
+                }
+            except ValueError as e:
+                dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, terminal_growth = g, wacc_offset = o)
+                dct = {
+                    "Value_Per_Share": None,
+                    "Implied_Multiple": None,
+                    "TV_Share": None,
+                    "WACC": None,
+                    "Terminal_Growth": g,
+                    "Offset": o,
+                    "Status": str(e)
+                }
+            grid[(o, g)] = dct
+    
+    return grid
 
 if __name__ == "__main__":
     symbol = "apple"
