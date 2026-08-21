@@ -69,7 +69,7 @@ def growth_rate(data: dict) -> dict:
     else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient"})
     return value
   
-def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") -> dict:
+def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", terminal_growth: float = TERMINAL_GROWTH) -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Growth_Rate": 0, "Revenue": 0} for year in projected_years}
@@ -82,13 +82,13 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median") ->
     
     for year in projected_years:
         i += 1
-        g_t = round(growth + (TERMINAL_GROWTH - growth) * i/len(projected_years), 4)
+        g_t = round(growth + (terminal_growth - growth) * i/len(projected_years), 4)
         rev *= (1 + g_t)
         value[year].update({"Growth_Rate": g_t, "Revenue": rev, "Source": base})
     
     return value
 
-def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None) -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
     last_year = sorted(data)[-1]
     if metrics is None: metrics = {}
 
@@ -113,10 +113,10 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")[cap_ex_str]
     NWC_INTENSITY = driver_ratio(data, "NWC")[nwc_str]
     
-    if terminal_roic <= TERMINAL_GROWTH: raise ValueError("Terminal ROIC must be greater than terminal growth")
+    if terminal_roic <= terminal_growth: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, NWC_INTENSITY]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
-    rev = project_revenue(data, years, base)
+    rev = project_revenue(data, years, base, terminal_growth)
     i = 0
     prev_rev = data[last_year]["Revenue"]["Value"]
     
@@ -135,13 +135,13 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         prev_rev = cur_rev
         
         if i == years:
-            cur_rev = rev[year]["Revenue"] * (1 + TERMINAL_GROWTH)
+            cur_rev = rev[year]["Revenue"] * (1 + terminal_growth)
             ebit = cur_rev * EBIT_MARGIN
             nopat = ebit * (1- MARGINAL_TAX_RATE)
             da = None
             capex = None
             dnwc = None
-            reinvestment_rate = TERMINAL_GROWTH / terminal_roic
+            reinvestment_rate = terminal_growth / terminal_roic
             reinvestment = nopat * reinvestment_rate
             fcf = nopat - reinvestment
             value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic, "Tax_Rate": MARGINAL_TAX_RATE, "Margin_Base": margin_base})

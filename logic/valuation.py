@@ -36,7 +36,7 @@ ASSUMPTIONS = {
     },
 }
 
-def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None) -> dict:
+def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
     if symbol not in ASSUMPTIONS: raise ValueError(f"Symbol {symbol} is not in ASSUMPTIONS.")
     
     settings = dict(ASSUMPTIONS[symbol])
@@ -49,24 +49,24 @@ def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: flo
     
     if settings["base"] not in ["Growth_Rate_Median", "Growth_Rate_Mean", "Mean_Last_Three"]: raise ValueError(f"{settings["base"]} not found in valid bases.")
     if settings["margin_base"] not in ["Driver_Ratio", "Mean_Last_Three", "Last"]: raise ValueError(f"{settings["margin_base"]} not found in valid margin bases.")
-    if not isinstance(settings["terminal_roic"], (int, float)) or settings["terminal_roic"] <= TERMINAL_GROWTH: raise ValueError(f"Terminal ROIC {settings["terminal_roic"]} is not valid.")
+    if not isinstance(settings["terminal_roic"], (int, float)) or settings["terminal_roic"] <= terminal_growth: raise ValueError(f"Terminal ROIC {settings["terminal_roic"]} is not valid.")
     if settings["metrics"] is not None and any(key not in ["D&A", "CapEx", "NWC"] for key in settings["metrics"]): raise ValueError(f"Invalid metric key in {sorted(settings["metrics"])}.")
     if settings["metrics"] is not None and any(value not in ["Driver_Ratio", "Mean_Last_Three"] for value in settings["metrics"].values()): raise ValueError(f"Invalid metric value in {sorted(settings["metrics"].values())}.")
 
     return settings
 
-def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
+def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, terminal_growth: float = TERMINAL_GROWTH):
     last_explicit = sorted(fcf)[-2]
     tv_row = sorted(fcf)[-1]
     
-    if wacc <= TERMINAL_GROWTH: raise ValueError("WACC must be greater than Terminal Growth.")
+    if wacc <= terminal_growth: raise ValueError("WACC must be greater than Terminal Growth.")
 
-    gordon_tv = fcf[tv_row]["FCF"] / (wacc - TERMINAL_GROWTH)
+    gordon_tv = fcf[tv_row]["FCF"] / (wacc - terminal_growth)
     ebitda = fcf[last_explicit]["EBIT"] + fcf[last_explicit]["D&A"]
     
     if method == "gordon":
         tv = gordon_tv
-        source = {"Terminal_Growth": TERMINAL_GROWTH}
+        source = {"Terminal_Growth": terminal_growth}
     elif method == "multiple":
         if exit_multiple is None: raise ValueError("Exit Multiple must be provided.")
         tv = ebitda * exit_multiple
@@ -76,8 +76,8 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float):
     return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
     
 
-def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None) -> dict:
-    settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics)
+def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0) -> dict:
+    settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics, terminal_growth)
     base = settings["base"]
     terminal_roic = settings["terminal_roic"]
     margin_base = settings["margin_base"]
@@ -89,9 +89,9 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
     
     data = get_data(symbol, start_year)
     wacc_calc = calc_wacc(data, symbol, freq, n, as_of = as_of_str)
-    wacc = wacc_calc["WACC"]
-    wacc_low = wacc_calc["WACC_Low"]
-    wacc_high = wacc_calc["WACC_High"]
+    wacc = wacc_calc["WACC"] + wacc_offset
+    wacc_low = wacc_calc["WACC_Low"] + wacc_offset
+    wacc_high = wacc_calc["WACC_High"] + wacc_offset
     waccs = [("wacc_low", wacc_low), ("wacc", wacc), ("wacc_high", wacc_high)]
     wacc_source = wacc_calc["Source"]
     last_year = max(data)
@@ -107,14 +107,14 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         if terminal_roic is None: 
             t_roic = w[1]
             roic_source = "WACC"
-        fcf = project_fcf(data, years, t_roic, base, margin_base, metrics)
+        fcf = project_fcf(data, years, t_roic, base, margin_base, metrics, terminal_growth)
         PV_Explicit = 0
         
         for i, row in enumerate(sorted(fcf)[:-1], start = 1):
             d_factor = (1 + w[1]) ** (i - 0.5)
             d_fcf = fcf[row]["FCF"] / d_factor
             PV_Explicit += d_fcf
-        tv = terminal_value(fcf, w[1], method, exit_multiple)
+        tv = terminal_value(fcf, w[1], method, exit_multiple, terminal_growth)
         PV_tv = tv["Terminal_Value"] / ((1 + w[1]) ** (years - 0.5))
         ev = (PV_Explicit + PV_tv) * ((1 + w[1]) ** stub)
         if data[last_year]["Debt"]["Value"] in (0, None) or data[last_year]["Cash"]["Value"] in (0, None) or data[last_year]["SharesOutstanding"]["Value"] in (0, None): raise ValueError("Debt, Cash and SharesOutstanding can't equal zero or None.")
@@ -128,7 +128,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
             tv_share = PV_tv / (PV_Explicit + PV_tv)
         else: tv_share_source = " and ".join([name for name, pv in [("PV_Explicit", PV_Explicit), ("PV_tv", PV_tv)] if pv <= 0]) + " <= 0"
 
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed}
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset}
         
     return value
 
