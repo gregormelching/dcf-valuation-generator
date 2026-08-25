@@ -1986,6 +1986,119 @@ and neither WACC nor `g` reaches it. That points at the EBIT margin fade in `pro
 still moves a number rather than basis points.
 
 
+#### Step 11 — the EBIT margin scenario table and the market price reference — DONE
+
+The third axis from step 10's handover. `MARGIN_BASES = ("Driver_Ratio", "Mean_Last_Three", "Last")`
+in `valuation.py`, swept by `sensitivity_table`, which returns a flat dict keyed by the margin base.
+`margin_base` was already a `dcf_value` parameter from step 4c, so nothing had to be threaded — the
+axis existed, it just had no sweep.
+
+At the same time `dcf_value` gained the market reference in every WACC row: `Market_Price`,
+`Price_Date`, `Price_Age_Days` and `Upside = value_per_share / market_price - 1`, pulled once
+outside the WACC loop via `get_prices(symbol, MARKET_PRICE_FREQ, 1, as_of_key)[-1]`.
+
+- **`MARKET_PRICE_FREQ = "1wk"`, not the `"1mo"` series the WACC regression runs on.** The monthly
+  series only carries month-end closes (newest 2026-07-31), so at `as_of = 2026-08-19` the reference
+  bar would be nineteen days stale while a weekly close from 2026-08-14 exists. The two series are
+  used for different things — the regression needs a uniform grid, the reference bar needs
+  recency — and `Price_Age_Days` keeps the remaining gap visible instead of hiding it.
+- **The price is fetched once, outside the loop, but written into all three rows.** It is a property
+  of the valuation date, not of the WACC scenario. Writing it per row costs nothing and means every
+  row is self-contained for rendering in Phase 4; recomputing it per row would have been wrong.
+- **`Upside` is not guarded against a zero price.** `get_prices` returning a 0 close would raise
+  `ZeroDivisionError` rather than produce a silent infinity. Left deliberate: a zero close is a data
+  defect, not a valuation state, and must not be swallowed by the `except ValueError` in the sweeps.
+
+Measured, `wacc` row, `as_of = 2026-08-19`, market close 2026-08-14:
+
+| Symbol | Driver_Ratio | Mean_Last_Three | Last | base | market | Upside at base |
+|---|---|---|---|---|---|---|
+| apple | 126.28 (28.81%) | 133.44 (31.10%) | 136.16 (31.97%) | Mean_Last_Three | 305.93 | -56.4% |
+| microsoft | 274.12 (41.59%) | 288.02 (44.01%) | 297.28 (45.62%) | Mean_Last_Three | 495.40 | -41.9% |
+| procter_gamble | 139.85 (22.09%) | 143.86 (22.81%) | 151.96 (24.26%) | Mean_Last_Three | 144.55 | -0.5% |
+| tesla | 14.67 (6.32%) | 20.35 (9.53%) | 11.60 (4.59%) | Last | 342.27 | -96.6% |
+| boeing | 89.63 (6.98%) | -6.51 (1.86%) | 48.42 (4.79%) | Last | 231.67 | -79.1% |
+
+Percentages are `EBIT_Margin_Target`, the terminal margin the fade arrives at.
+
+**The margin axis is the widest of the three, and it confirms step 8 rather than closing the gap.**
+Apple moves 126.28 to 136.16 across the whole axis — 7.8% — while the market sits 129% above. The
+axis that was supposed to reach the terminal block does move it (`Implied_Multiple` 9.41 to 9.49 on
+Apple, 3.30 to 4.53 on Tesla), but by single-digit percentages against a sector 24-25x. Combined with
+step 10's grid: none of the three axes reaches the gap, and P&G still matches the market at base.
+
+**Boeing's `Mean_Last_Three` cell is negative, and it is the most informative cell in the table.**
+-6.51 per share at a 1.86% terminal margin — the three clean years feeding that mean end in 2023,
+so the statistic describes the 737 MAX aftermath, not the current business. It is the same
+non-stationarity that step 4c decided the `Last` base on, now visible as a sign flip rather than as
+an argument. The cell is not a scenario; it is the evidence for the base choice.
+
+#### Step 12 — the NWC intensity axis, Boeing-specific — DONE
+
+The last carried-forward item from step 4d/4e. `NWC_INTENSITY` came out of `driver_ratio(data,
+"NWC")[nwc_str]` and could only take two values, the median or the three-year mean, which for Boeing
+sit 1.2 points apart (22.11% against 20.92%) inside an observed range of 2.82% to 43.68%. The
+statistic choice was not an axis. `project_fcf` now takes `nwc_intensity: float | None = None`,
+appended at the end of the signature like step 10's parameters, threaded through `dcf_value`, and
+swept by `nwc_scenario` over `NWC_INTENSITIES = (0.0282, 0.1686, 0.2092, 0.2211, 0.4368)`.
+
+Measured on Boeing, `wacc` row, `as_of = 2026-08-19`, market 231.67:
+
+| Intensity | Source | Value_Per_Share | TV_Share | Implied_Multiple |
+|---|---|---|---|---|
+| 2.82% | minimum (2018) | 64.34 | 0.6215 | 7.81 |
+| 16.86% | last actual year (2025) | 52.75 | 0.6987 | 7.81 |
+| 20.92% | `Mean_Last_Three` | 49.40 | 0.7247 | 7.81 |
+| 22.11% | median, the base | 48.42 | 0.7327 | 7.81 |
+| 43.68% | maximum (2016) | 30.61 | 0.9159 | 7.81 |
+
+- **The levels are a fixed tuple, not min/median/max derived from the data.** Derived levels change
+  with every cache refresh, which makes two runs incomparable and the cells impossible to pin as
+  golden values. Same reason `WACC_OFFSETS` is a constant. Each of the five has a name, so the axis
+  stays interpretable: the two observed extremes, the current balance sheet, and the two statistics
+  the model can actually produce.
+- **`Implied_Multiple` and `EBIT_Margin_Target` are constant along this axis by construction.**
+  `dNWC` is `None` in the terminal row — the terminal block depends only on `EBIT_MARGIN`,
+  `terminal_roic` and `g`. This axis moves `PV_Explicit` alone. The readout is `TV_Share`, which runs
+  0.6215 to 0.9159; anyone reusing step 11's `Implied_Multiple` readout here would read an unmoved
+  number as stability.
+- **It stays Boeing-specific, and the reason is now quantified.** Apple's entire observed NWC range
+  (-13.07% to -8.03%) moves its value from 133.39 to 132.85, 0.4%. Boeing's range moves 64.34 to
+  30.61, 70% of the base. A shared axis would fill four companies with noise so that one shows
+  signal. Other symbols need their own tuple passed in; the default is Boeing's.
+- **`Is_Base` reads the statistic from `ASSUMPTIONS[symbol]["metrics"]`, not always `Driver_Ratio`.**
+  Boeing is on the median for NWC, but Apple and P&G are on `Mean_Last_Three`. Comparing against the
+  median unconditionally would have marked a cell as the base that was never computed. The fallback
+  cascade is duplicated from `project_fcf`, because `project_fcf` only exposes the choice as a
+  display string in `Metrics`, and a comparison must not depend on a display format.
+- **The override renames the provenance.** `nwc_str` becomes `"Override"`, so the row's `Metrics`
+  reads `Driver_Ratio+Mean_Last_Three+Override` instead of claiming a statistic that was never
+  consulted. `nwc_intensity` defaults to `None`, not `0.0`, because 0 is a legitimate intensity —
+  Tesla sits at -0.52%.
+- **`nwc_intensity` is not an `ASSUMPTIONS` key and does not pass through `resolve_assumptions`.**
+  It is a sweep axis like `terminal_growth` and `wacc_offset`, not a company assumption.
+  `ASSUMPTIONS` stays the single source for what the base case is.
+
+#### Golden values reset — the risk-free cache, not the model
+
+All 35 golden values from step 9 moved by +0.4% to +0.9% and had to be reset. The cause is neither
+step 11 nor step 12: `as_of` freezes the ledger data but not the completeness of the rate cache.
+`risk_free_rate(as_of)` resolves to the newest cached DGS10 row `<= as_of`. When the goldens were
+pinned the cache ended 2026-08-14 (4.68%); a run of `valuation.py`'s `__main__` without `as_of` fell
+through to `datetime.now()`, found nothing for today, and `fetch_rates` backfilled DGS10 to
+2026-08-21. The same `as_of = 2026-08-19` now resolves to 4.65% from 2026-08-19 itself. Apple:
+WACC 0.09025 to 0.08996, exactly the 3bp.
+
+- **`RF_Date` is now part of `dcf_value`'s row dict and part of the golden suite** (`test_rf_date`,
+  40 tests). The incident presented as five opaque numeric deviations; with the date pinned, the
+  same event fails at one assertion that names its own cause. `RF_Fetched_At` is deliberately *not*
+  pinned — it changes on every fetch and would be unstable by construction.
+- **Standing rule from this: every call in a `__main__` block carries `as_of`.** Without it a debug
+  run silently mutates the cache the goldens are pinned against.
+- **Whether "newest row <= as_of" survives is a Phase 6 question**, together with the gitignored
+  database. Options are an exact-date match with an explicit staleness error, or a rate frozen into
+  the test fixture. Not decided here, because both change what `as_of` means for every consumer.
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - The current market price belongs in the output as a reference bar, not just the value range

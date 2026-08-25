@@ -10,54 +10,59 @@ REL = 1e-9
 
 GOLDEN = {
     "apple": {
-        "Value_Per_Share": 132.93314018502642,
-        "WACC": 0.09025112725090859,
-        "EV": 1930504004772.4358,
-        "Low": 148.9387279796099,
-        "High": 120.43441028667516,
-        "Implied_Multiple": 9.42668337424583,
-        "TV_Share": 0.4959109494244441,
-        "Data_Filed": "2025-10-31"
+        "Value_Per_Share": 133.44106525333228,
+        "WACC": 0.08995747953161094,
+        "EV": 1938009284879.2722,
+        "Low": 149.59995602555952,
+        "High": 120.83715459465307,
+        "Implied_Multiple": 9.469297775133125,
+        "TV_Share": 0.4973754873996333,
+        "Data_Filed": "2025-10-31",
+        "RF_Date": "2026-08-19"
     },
     "microsoft": {
-        "Value_Per_Share": 286.7702755785626,
-        "WACC": 0.09182378514718367,
-        "EV": 2064792170927.136,
-        "Low": 333.95661481697067,
-        "High": 251.68040963847812,
-        "Implied_Multiple": 8.798608692948864,
-        "TV_Share": 0.611432704705746,
-        "Data_Filed": "2026-07-29"
+        "Value_Per_Share": 288.01770203385166,
+        "WACC": 0.09152748645648522,
+        "EV": 2074064499314.8662,
+        "Low": 335.670332283555,
+        "High": 252.62692050731164,
+        "Implied_Multiple": 8.837795747421366,
+        "TV_Share": 0.6127997614864084,
+        "Data_Filed": "2026-07-29",
+        "RF_Date": "2026-08-19"
     },
     "procter_gamble": {
-        "Value_Per_Share": 142.97501416331895,
-        "WACC": 0.06724483047851787,
-        "EV": 359852596672.5545,
-        "Low": 171.84813810612897,
-        "High": 122.6425845006934,
-        "Implied_Multiple": 13.867858348408992,
-        "TV_Share": 0.6312886378125676,
-        "Data_Filed": "2026-08-04"
+        "Value_Per_Share": 143.86212939293225,
+        "WACC": 0.06697258808201786,
+        "EV": 361930550092.97125,
+        "Low": 173.14932899749473,
+        "High": 123.28632225609375,
+        "Implied_Multiple": 13.957807983721354,
+        "TV_Share": 0.6330847958177995,
+        "Data_Filed": "2026-08-04",
+        "RF_Date": "2026-08-19"
     },
     "tesla": {
-        "Value_Per_Share": 11.580145700129227,
-        "WACC": 0.11284298255371317,
-        "EV": 7547709104.544979,
-        "Low": 14.525248530457889,
-        "High": 10.154654815360814,
-        "Implied_Multiple": 3.289534981323289,
+        "Value_Per_Share": 11.603865968690068,
+        "WACC": 0.11254506249381475,
+        "EV": 7636717798.961755,
+        "Low": 14.57777856563369,
+        "High": 10.166951960086344,
+        "Implied_Multiple": 3.300729427140757,
         "TV_Share": None,
-        "Data_Filed": "2026-01-29"
+        "Data_Filed": "2026-01-29",
+        "RF_Date": "2026-08-19"
     },
     "boeing": {
-        "Value_Per_Share": 48.00817099277191,
-        "WACC": 0.07849922737698098,
-        "EV": 69564077673.44485,
-        "Low": 70.45075697938258,
-        "High": 32.65389007866942,
-        "Implied_Multiple": 7.779873033642834,
-        "TV_Share": 0.7317169399674108,
-        "Data_Filed": "2026-01-30"
+        "Value_Per_Share": 48.41719056990017,
+        "WACC": 0.07827978063775556,
+        "EV": 69885300010.54968,
+        "Low": 71.06976492152138,
+        "High": 32.943199671951476,
+        "Implied_Multiple": 7.8119164795501685,
+        "TV_Share": 0.7326744961458926,
+        "Data_Filed": "2026-01-30",
+        "RF_Date": "2026-08-19"
     },
 }
 
@@ -128,3 +133,18 @@ def test_data_filed(result):
     assert val["wacc"]["Data_Filed"] == GOLDEN[sym]["Data_Filed"]
     assert val["wacc_high"]["Data_Filed"] == GOLDEN[sym]["Data_Filed"]
         
+def test_rf_date(result):
+    sym = result[0]
+    val = result[1]
+
+    assert val["wacc_low"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+    assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+    assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+
+def test_rf_date(result):
+    sym = result[0]
+    val = result[1]
+
+    assert val["wacc_low"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+    assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+    assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]

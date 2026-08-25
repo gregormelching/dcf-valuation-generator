@@ -1,4 +1,4 @@
-from model import project_fcf, TERMINAL_GROWTH
+from model import project_fcf, TERMINAL_GROWTH, driver_ratio
 from datetime import datetime
 from wacc_calculation import calc_wacc, N_MONTHS
 from database import get_data, get_prices
@@ -38,6 +38,7 @@ ASSUMPTIONS = {
 
 WACC_OFFSETS = (-0.02, -0.01, 0.0, 0.01, 0.02)
 TERMINAL_GROWTHS = (0.015, 0.02, 0.025, 0.03, 0.035)
+NWC_INTENSITIES = (0.0282, 0.1686, 0.2092, 0.2211, 0.4368)
 MARGIN_BASES = ("Driver_Ratio", "Mean_Last_Three", "Last")
 MARKET_PRICE_FREQ = "1wk"
 
@@ -81,7 +82,7 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, te
     return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
     
 
-def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0) -> dict:
+def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0, nwc_intensity: float | None = None) -> dict:
     settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics, terminal_growth)
     base = settings["base"]
     terminal_roic = settings["terminal_roic"]
@@ -114,7 +115,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         if terminal_roic is None: 
             t_roic = w[1]
             roic_source = "WACC"
-        fcf = project_fcf(data, years, t_roic, base, margin_base, metrics, terminal_growth)
+        fcf = project_fcf(data, years, t_roic, base, margin_base, metrics, terminal_growth, nwc_intensity)
         PV_Explicit = 0
         
         for i, row in enumerate(sorted(fcf)[:-1], start = 1):
@@ -135,7 +136,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
             tv_share = PV_tv / (PV_Explicit + PV_tv)
         else: tv_share_source = " and ".join([name for name, pv in [("PV_Explicit", PV_Explicit), ("PV_tv", PV_tv)] if pv <= 0]) + " <= 0"
 
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1}
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": margin_base, "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"]}
         
     return value
 
@@ -169,7 +170,7 @@ def sensitivity_grid(symbol: str, start_year: int, years: int, freq: str, n: int
     
     return grid
 
-def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, margin_bases = MARGIN_BASES):
+def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, margin_bases: tuple = MARGIN_BASES):
     table = {}
     
     for mb in margin_bases:
@@ -207,6 +208,48 @@ def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: in
         table[mb] = dct
     return table
 
+def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, nwc_intensities: tuple = NWC_INTENSITIES):
+    table = {}
+    
+    metrics = ASSUMPTIONS[symbol]["metrics"]
+    nwc_str = metrics["NWC"] if metrics is not None and "NWC" in metrics else "Driver_Ratio"
+    
+    d  = driver_ratio(get_data(symbol, start_year), "NWC")[nwc_str]    
+    for i in nwc_intensities:
+        is_intensity = abs(i - d) < 1e-9
+        try:
+            dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, nwc_intensity = i)
+            wacc = dcf["wacc"]
+            dct = {
+                "Value_Per_Share": wacc["Value_Per_Share"],
+                "EBIT_Margin_Target": wacc["EBIT_Margin_Target"],
+                "Implied_Multiple": wacc["Implied_Multiple"],
+                "TV_Share": wacc["TV_Share"],
+                "TV_Share_Source": wacc["TV_Share_Source"],
+                "Market_Price": wacc["Market_Price"],
+                "Upside": wacc["Upside"],
+                "WACC": wacc["WACC"],
+                "NWC_Intensity": i,
+                "Is_Base": is_intensity,
+                "Status": "calculated"
+            }
+        except ValueError as e:
+            dct = {
+                "Value_Per_Share": None,
+                "EBIT_Margin_Target": None,
+                "Implied_Multiple": None,
+                "TV_Share": None,
+                "TV_Share_Source": None,
+                "Market_Price": None,
+                "Upside": None,
+                "WACC": None,
+                "NWC_Intensity": i,
+                "Is_Base": is_intensity,
+                "Status": str(e)
+            }
+        table[i] = dct
+    return table
+
 if __name__ == "__main__":
     symbol = "apple"
-    dcf_value(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-19")
+    print(nwc_scenario("apple", 2016, 10, "1mo", N_MONTHS, "2026-08-19"))

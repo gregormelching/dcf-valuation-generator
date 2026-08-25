@@ -88,7 +88,7 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", te
     
     return value
 
-def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None) -> dict:
     last_year = sorted(data)[-1]
     if metrics is None: metrics = {}
 
@@ -112,7 +112,11 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     D_AND_A_MARGIN = driver_ratio(data, "D&A")[da_str]
     CAP_EX_MARGIN = driver_ratio(data, "CapEx")[cap_ex_str]
     NWC_INTENSITY = driver_ratio(data, "NWC")[nwc_str]
-    
+    if nwc_intensity is not None:
+        if not isinstance(nwc_intensity, (int, float)): raise ValueError(f"Invalid type for NWC intensity: {type(nwc_intensity)}")
+        NWC_INTENSITY = nwc_intensity
+        nwc_str = "Override"
+            
     if terminal_roic <= terminal_growth: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, NWC_INTENSITY]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
