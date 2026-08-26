@@ -88,7 +88,7 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", te
     
     return value
 
-def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None) -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None, ebit_margin: float | None = None) -> dict:
     last_year = sorted(data)[-1]
     if metrics is None: metrics = {}
 
@@ -100,6 +100,10 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     LAST_EBIT_MARGIN = data[last_year]["OperatingIncome"]["Value"] / data[last_year]["Revenue"]["Value"]
     if margin_base == "Last": EBIT_MARGIN = LAST_EBIT_MARGIN
     else:  EBIT_MARGIN = driver_ratio(data, "OperatingIncome")[margin_base]
+    if ebit_margin is not None:
+        if not isinstance(ebit_margin, (float, int)): raise ValueError(f"Ebit Margin must be a number or float")
+        EBIT_MARGIN = ebit_margin
+        margin_base = "Override"
     
     default = "Driver_Ratio"
     if "D&A" in keys: da_str = metrics.get("D&A") 

@@ -2099,6 +2099,109 @@ WACC 0.09025 to 0.08996, exactly the 3bp.
   database. Options are an exact-date match with an explicit staleness error, or a rate frozen into
   the test fixture. Not decided here, because both change what `as_of` means for every consumer.
 
+#### Step 13 — the Monte Carlo layer — DONE
+
+The last Phase 3 item, listed there as optional. `monte_carlo` in `valuation.py` draws three inputs
+per iteration and returns one aggregate dict, not a table of cells like the three sweeps before it.
+`MC_DRAWS = 2000`, `MC_SEED = 12345`, `MC_Z = 1.96`, `MC_PERCENTILES = (0.05, 0.25, 0.5, 0.75, 0.95)`
+and `MC_BORDERS = (min(TERMINAL_GROWTHS), TERMINAL_GROWTH, max(TERMINAL_GROWTHS))` as module
+constants. No new parameter on `dcf_value` was needed — `terminal_growth`, `wacc_offset` and
+`ebit_margin` already existed from steps 10 to 12; this step only samples them.
+
+**Two distributions, chosen for what the input actually is, not for convenience.**
+
+- **WACC: normal.** `calc_wacc` produces a Low/High band from a regression confidence interval, which
+  is symmetric around the estimate by construction. `sigma = (wacc_high - wacc_low) / (2 * MC_Z)`
+  inverts the 1.96 that built the band. Anything else would discard the only real uncertainty
+  measurement the model has.
+- **Terminal growth and EBIT margin: triangular.** Both have hard bounds and a preferred value and no
+  tail worth modelling — `g` outside 1.5-3.5% stops being a long-run growth rate, and the margin
+  outside the three `MARGIN_BASES` targets is not a statistic the model can produce.
+  `random.triangular` takes `(low, high, mode)`, while `MC_BORDERS` is stored as `(low, mode, high)`
+  to stay readable next to `TERMINAL_GROWTHS`; the call is
+  `rng.triangular(MC_BORDERS[0], MC_BORDERS[2], MC_BORDERS[1])`. Passing the tuple straight through
+  samples a different distribution without raising.
+
+**The margin vertices come from a pre-pass, not from the draw loop.** Three `dcf_value` calls over
+`MARGIN_BASES` fill a `mb -> EBIT_Margin_Target` dict; `m_low`/`m_high` are its min/max and `m_mode`
+is the entry for `ASSUMPTIONS[symbol]["margin_base"]`. The vertices do not depend on the draw, so
+computing them inside the loop would triple a 14-second run for nothing. The mode must be read from
+that dict — the assumption key is a string like `"Mean_Last_Three"`, not a number.
+
+**`random.Random(seed)` is instantiated exactly once, after the pre-pass.** Re-seeding inside a loop
+replays an identical sequence, which looks like a working simulation and is a constant. The draw
+order WACC, then `g`, then margin is part of the specification: reordering it changes every pinned
+number while the model stays identical.
+
+**Successes and failures are stored apart.** Values go into a list, failures into a
+`message -> count` dict, and the `try` wraps the `dcf_value` call itself, not the dict literal built
+from its result. `Draws_OK + Draws_Failed == draws` is then a checkable invariant, and a failure is
+never confusable with a value — which a draw-indexed dict of rows would not give. Percentiles use
+an explicit linear interpolation (`k = (len(values) - 1) * p`) rather than `statistics.quantiles`, so
+the convention is pinned in the repo instead of in a library default. `P_Above_Market` counts draws
+above the market price, not the base value against it. The percentile loop sits behind an
+`if values:` guard: with an empty list `int((0 - 1) * 0.05)` is `0` and `values[0]` raises
+`IndexError`, which no caller filters for, and it would fire exactly in the case where `Failures`
+holds the explanation.
+
+Measured, `as_of = 2026-08-19`, 2000 draws, seed 12345, market close 2026-08-14:
+
+| Symbol | base | P05 | P25 | P50 | P75 | P95 | Mean | market | P_Above_Market |
+|---|---|---|---|---|---|---|---|---|---|
+| apple | 133.44 | 119.68 | 126.68 | 132.05 | 138.45 | 148.35 | 132.87 | 305.93 | 0.0% |
+| microsoft | 288.02 | 253.31 | 272.19 | 286.73 | 304.43 | 332.08 | 289.24 | 495.40 | 0.0% |
+| procter_gamble | 143.86 | 123.82 | 135.41 | 145.31 | 157.70 | 178.85 | 147.74 | 144.55 | 51.7% |
+| tesla | 11.60 | 11.38 | 12.77 | 14.36 | 16.37 | 19.81 | 14.79 | 342.27 | 0.0% |
+| boeing | 48.42 | 10.53 | 28.67 | 43.38 | 59.97 | 83.68 | 45.08 | 231.67 | 0.0% |
+
+`WACC_Sigma` and the margin vertices behind those columns:
+
+| Symbol | WACC_Sigma | m_low | m_mode | m_high | Draws_Failed |
+|---|---|---|---|---|---|
+| apple | 0.4158pp | 28.81% | 31.10% | 31.97% | 0 |
+| microsoft | 0.4902pp | 41.59% | 44.01% | 45.62% | 0 |
+| procter_gamble | 0.3760pp | 22.09% | 22.81% | 24.26% | 0 |
+| tesla | 1.2612pp | 4.59% | 4.59% | 9.53% | 0 |
+| boeing | 0.5015pp | 1.86% | 4.79% | 6.98% | 0 |
+
+**P&G is the only company whose distribution straddles the market, and it does so almost exactly.**
+51.7% of draws land above 144.55, with the median at 145.31 against a base of 143.86. That is the
+same result steps 10 and 11 produced from a single cell, now with a probability attached rather than
+a point. For the other four the market lies outside the 95th percentile entirely — Apple's P95 is
+148.35 against 305.93 — so `P_Above_Market` is structurally 0 and carries no information there. The
+metric is only readable where the base sits near the price.
+
+**Tesla's triangular is degenerate, and that is a modelling defect, not a Tesla fact.** Its
+`margin_base` is `Last`, which is also the minimum of the three targets, so
+`m_low == m_mode == 4.59%` and the distribution is one-sided upward. The consequence: mean 14.79 and
+median 14.36 against a base of 11.60, +27% and +24%. The simulation reports a centre the base case
+never computes. This fires whenever a company's assumed margin base is an extreme of `MARGIN_BASES`
+rather than the middle one — it is a property of using the three statistics as vertices, and any
+company can land there after a cache refresh. Not fixed here; the honest reading for now is that
+Tesla's MC centre is not its base case. Options for later: widen the vertices by a fixed spread
+around the mode, or fall back to a symmetric distribution when the mode equals a bound.
+
+**Boeing's left tail samples a scenario step 11 already rejected.** `m_low` is 1.86%, the
+`Mean_Last_Three` margin whose three clean years end in 2023 and describe the 737 MAX aftermath —
+the cell step 11 measured at -6.51 per share. The MC draws the whole way down to it, which is why P05
+is 10.53 against a base of 48.42 and the spread is by far the widest of the five. That left tail is
+not a risk estimate; it is the non-stationarity the `Last` base choice exists to avoid, re-entering
+through the margin vertices.
+
+**Where the median tracks the base, the machinery is behaving.** Apple 132.05 against 133.44 and
+Microsoft 286.73 against 288.02 — a central mode plus a symmetric WACC draw returns the base case,
+with the small downward shift coming from the `g` mode at 2.5% sitting slightly below the midpoint of
+its own range. No draw failed for any company: with WACC between 6.7% and 11.3% and `g` capped at
+3.5%, `wacc > g` never comes under pressure, so the `Failures` path is untested against real data.
+
+**Two limitations to carry forward.** First, the three inputs are drawn independently, while in
+reality a high margin, a high growth rate and a low WACC co-occur. The simulation therefore
+understates both tails; the percentiles are narrower than the true uncertainty, not wider. Modelling
+that correlation needs a joint distribution and is out of scope here. Second, the function returns
+only the aggregate — the 2000 individual values are discarded. A histogram in Phase 4 needs either
+the raw list or a bin count, so the return shape has to grow one field before the dashboard can draw
+the distribution it is meant to show.
+
 ### Phase 3 — Sensitivity & scenarios (2–3 days)
 - Sensitivity table (WACC vs. terminal growth rate — football field matrix)
 - The current market price belongs in the output as a reference bar, not just the value range
@@ -2109,7 +2212,7 @@ WACC 0.09025 to 0.08996, exactly the 3bp.
   an external number rather than only against itself.
 - Carried in from step 4d/4e: Boeing's NWC intensity is not stationary, so NWC intensity is a
   Boeing-specific axis, not a shared one.
-- Optional: Monte Carlo simulation over uncertain inputs for a valuation range
+- Monte Carlo simulation over uncertain inputs for a valuation range — DONE (step 13)
 
 **Learning goals:** master sensitivity analysis as a valuation tool; for Monte Carlo,
 understand random distributions and sampling, not just call a library function.
