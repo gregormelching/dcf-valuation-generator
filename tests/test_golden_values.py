@@ -1,5 +1,5 @@
 import pytest 
-from valuation import dcf_value
+from valuation import dcf_value, monte_carlo
 from wacc_calculation import N_MONTHS
 
 AS_OF = "2026-08-19"
@@ -7,6 +7,46 @@ START_YEAR = 2016
 YEARS = 10
 FREQ = "1mo"
 REL = 1e-9
+DRAWS = 2000
+SEED = 12345
+
+MC_GOLDEN = {
+    "apple": {
+        "Percentiles": {0.05: 119.68165662036753, 0.25: 126.67846911637066, 0.5: 132.0549687114854, 0.75: 138.4535670055825, 0.95: 148.35364458330798},
+        "Mean": 132.87252657242456,
+        "P_Above_Market": 0.0,
+        "WACC_Sigma": 0.004157942544885411,
+        "Margin_Range": (0.2881, 0.311, 0.31970799762591884),
+    },
+    "boeing": {
+        "Percentiles": {0.05: 10.525922004067287, 0.25: 28.665822950061298, 0.5: 43.383082655109284, 0.75: 59.966901179276135, 0.95: 83.68168784611444},
+        "Mean": 45.08001783012066,
+        "P_Above_Market": 0.0,
+        "WACC_Sigma": 0.005015380997594274,
+        "Margin_Range": (0.0186, 0.0478521847020556, 0.0698),
+    },
+    "microsoft": {
+        "Percentiles": {0.05: 253.30901238559494, 0.25: 272.1938255594725, 0.5: 286.7280681124347, 0.75: 304.42527193370665, 0.95: 332.0827976343321},
+        "Mean": 289.24113681309524,
+        "P_Above_Market": 0.0,
+        "WACC_Sigma": 0.004901827056874809,
+        "Margin_Range": (0.4159, 0.4401, 0.4562195624085985),
+    },
+    "procter_gamble": {
+        "Percentiles": {0.05: 123.8214594125936, 0.25: 135.4147881347369, 0.5: 145.31487150328533, 0.75: 157.69816207190578, 0.95: 178.84621301741208},
+        "Mean": 147.73554932950893,
+        "P_Above_Market": 0.5165,
+        "WACC_Sigma": 0.003759716864892804,
+        "Margin_Range": (0.2209, 0.2281, 0.24264391818138675),
+    },
+    "tesla": {
+        "Percentiles": {0.05: 11.383458435628654, 0.25: 12.768689799617022, 0.5: 14.358917920983682, 0.75: 16.366842218213144, 0.95: 19.811374128550597},
+        "Mean": 14.788374552624214,
+        "P_Above_Market": 0.0,
+        "WACC_Sigma": 0.012612017977356959,
+        "Margin_Range": (0.04592573845001951, 0.04592573845001951, 0.0953),
+    },
+}
 
 GOLDEN = {
     "apple": {
@@ -70,6 +110,12 @@ GOLDEN = {
 def result(request):
     symbol = request.param
     value = dcf_value(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF)
+    return (symbol, value)
+
+@pytest.fixture(scope = "module", params = sorted(MC_GOLDEN), ids = sorted(MC_GOLDEN))
+def mc_result(request):
+    symbol = request.param
+    value = monte_carlo(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF, draws = DRAWS, seed = SEED)
     return (symbol, value)
 
 def test_value_per_share(result):
@@ -141,10 +187,50 @@ def test_rf_date(result):
     assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
     assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
 
-def test_rf_date(result):
-    sym = result[0]
-    val = result[1]
+@pytest.mark.slow
+def test_percentiles(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
 
-    assert val["wacc_low"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
-    assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
-    assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+    assert val["Percentiles"][0.05] == pytest.approx(MC_GOLDEN[sym]["Percentiles"][0.05], rel = REL)
+    assert val["Percentiles"][0.5] == pytest.approx(MC_GOLDEN[sym]["Percentiles"][0.5], rel = REL)
+    assert val["Percentiles"][0.95] == pytest.approx(MC_GOLDEN[sym]["Percentiles"][0.95], rel = REL)
+    
+@pytest.mark.slow    
+def test_mean(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+
+    assert val["Mean"] == pytest.approx(MC_GOLDEN[sym]["Mean"], rel = REL)
+    
+@pytest.mark.slow    
+def test_margin_range(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+
+    assert val["Margin_Range"][0] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][0], rel = REL)
+    assert val["Margin_Range"][1] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][1], rel = REL)
+    assert val["Margin_Range"][2] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][2], rel = REL)
+
+@pytest.mark.slow    
+def test_wacc_sigma(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+    
+    assert val["WACC_Sigma"] == pytest.approx(MC_GOLDEN[sym]["WACC_Sigma"], rel = REL)
+
+@pytest.mark.slow
+def test_p_above_market(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+
+    assert val["P_Above_Market"] == MC_GOLDEN[sym]["P_Above_Market"]
+
+@pytest.mark.slow
+def test_draw_accounting(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+
+    assert val["Draws_OK"] + val["Draws_Failed"] == DRAWS
+    assert val["Draws_OK"] == len(val["Draws"])
+    assert sum(val["Failures"].values()) == val["Draws_Failed"]

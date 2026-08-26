@@ -307,8 +307,9 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     draws_ok = len(values)
     draws_failed = sum(fails.values())
     margin_range = (m_low, m_mode, m_high)
+    d = list(values)
     
-    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails}
+    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
 
 if __name__ == "__main__":
     symbol = "apple"

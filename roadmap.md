@@ -2198,12 +2198,39 @@ its own range. No draw failed for any company: with WACC between 6.7% and 11.3% 
 reality a high margin, a high growth rate and a low WACC co-occur. The simulation therefore
 understates both tails; the percentiles are narrower than the true uncertainty, not wider. Modelling
 that correlation needs a joint distribution and is out of scope here. Second, the function returns
-only the aggregate — the 2000 individual values are discarded. A histogram in Phase 4 needs either
-the raw list or a bin count, so the return shape has to grow one field before the dashboard can draw
-the distribution it is meant to show.
+only the aggregate. A histogram in Phase 4 needs the individual values, so the return carries them as
+`Draws` — a `list(values)` copy, not the list the aggregation itself computes on, which a caller
+could mutate. The binning stays in the presentation layer: derived bin edges would change with every
+cache refresh, the same reason `NWC_INTENSITIES` in step 12 is a fixed tuple rather than a range
+pulled from the data.
 
-### Phase 3 — Sensitivity & scenarios (2–3 days)
-- Sensitivity table (WACC vs. terminal growth rate — football field matrix)
+**The MC values are pinned, and the suite goes from 40 to 70 tests.** `MC_GOLDEN` in
+`tests/test_golden_values.py` holds the five percentiles, `Mean`, `P_Above_Market`, `WACC_Sigma` and
+`Margin_Range` per symbol, driven by a second module-scoped fixture `mc_result` alongside the
+existing `result`. `Base_Value_Per_Share`, `Market_Price` and `WACC` are deliberately not pinned here
+— they already sit in `GOLDEN`, and the same number in two places has to be reset twice after every
+shift.
+
+- **`DRAWS = 2000` and `SEED = 12345` are local test constants, passed explicitly to `monte_carlo`,
+  not imported from `MC_DRAWS`/`MC_SEED`.** A golden value checked against a constant that moves with
+  the code checks nothing: change `MC_DRAWS` and the suite silently re-pins itself green.
+- **`P_Above_Market` is compared with `==`, not `pytest.approx`.** It is a count over a denominator
+  of 2000, exactly representable, and an exact assertion catches an off-by-one in the counting that
+  a relative tolerance of 1e-9 would still let through.
+- **`Margin_Range` is asserted element by element**, so a failure names which vertex moved. As a
+  tuple comparison it would only say that the triangle changed.
+- **`test_draw_accounting` is the one test here that is not a golden value.** It asserts
+  `Draws_OK + Draws_Failed == draws`, `Draws_OK == len(Draws)` and
+  `sum(Failures.values()) == Draws_Failed`. Those hold after any cache refresh, so they keep working
+  as a structural check once the pinned numbers have to be reset again.
+- **The six MC tests carry `@pytest.mark.slow`, registered in `pytest.ini`.** Measured: the full
+  suite runs 57-60 seconds against 0.61 for `-m "not slow"` (40 passed, 30 deselected). Without the
+  marker every parser-only change costs a minute, and the predictable outcome is that the suite gets
+  run less often, which is the opposite of what pinning is for.
+
+### Phase 3 — Sensitivity & scenarios — DONE
+- Sensitivity table (WACC vs. terminal growth rate) — DONE (step 10). The football field as a
+  *chart* is Phase 4; the numbers behind it are complete.
 - The current market price belongs in the output as a reference bar, not just the value range
   (see the phase order note above).
 - Carried in from step 8: the terminal block is where the conservatism sits (implied 8-10x against
