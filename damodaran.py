@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent / "logic"))
 from logic.database import get_data
 from logic.model import effective_tax_rate, roic, MARGINAL_TAX_RATE
 from logic.prices import risk_free_rate
-from logic.wacc_calculation import calc_wacc, adjusted_beta, cost_of_debt, EQUITY_RISK_PREMIUM, COD_FALLBACK_START_YEAR
+from logic.wacc_calculation import calc_wacc, adjusted_beta, cost_of_debt, EQUITY_RISK_PREMIUM, COD_FALLBACK_START_YEAR, synthetic_cost_of_debt
 from logic.valuation import dcf_value, ASSUMPTIONS
 from logic.validation import OUTLIER_RULES
 
@@ -56,24 +56,6 @@ DAMODARAN = {
     },
 }
 
-SPREADS = [
-    (-100000.0, 0.199999, "D2/D", 0.1900),
-    (0.2, 0.649999, "C2/C", 0.1600),
-    (0.65, 0.799999, "Ca2/CC", 0.1261),
-    (0.8, 1.249999, "Caa/CCC", 0.0885),
-    (1.25, 1.499999, "B3/B-", 0.0509),
-    (1.5, 1.749999, "B2/B", 0.0321),
-    (1.75, 1.999999, "B1/B+", 0.0275),
-    (2.0, 2.2499999, "Ba2/BB", 0.0184),
-    (2.25, 2.49999, "Ba1/BB+", 0.0138),
-    (2.5, 2.999999, "Baa2/BBB", 0.0111),
-    (3.0, 4.249999, "A3/A-", 0.0089),
-    (4.25, 5.499999, "A2/A", 0.0078),
-    (5.5, 6.499999, "A1/A+", 0.0070),
-    (6.5, 8.499999, "Aa2/AA", 0.0055),
-    (8.5, 100000.0, "Aaa/AAA", 0.0040),
-]
-
 METRICS = [
     ("Beta", "Levered beta", "num", 0.30),
     ("Beta_Unlevered", "Unlevered beta", "num", 0.30),
@@ -98,55 +80,6 @@ NOTES = [
 TOLERANCE_ERP = 0.0050
 TOLERANCE_SYNTHETIC_COD = 0.0200
 
-
-def synthetic_rating(coverage: float) -> dict:
-    for low, high, rating, spread in SPREADS:
-        if low <= coverage <= high:
-            return {"Rating": rating, "Spread": spread, "Source": "Damodaran large cap"}
-    raise ValueError(f"Coverage ratio {coverage} outside the spread table.")
-
-
-def interest_coverage(data: dict) -> dict:
-    value = {"Coverage": None, "Year": None, "n": 0, "Source": "Unavailable"}
-    years = []
-
-    for year in sorted(data):
-        ebit = data[year]["OperatingIncome"]
-        interest = data[year]["InterestExpense"]
-        if ebit["Value"] is None or interest["Value"] in (None, 0):
-            continue
-        flags_ebit = [flag for flag in ebit["Flag"]]
-        flags_int = [flag for flag in interest["Flag"]]
-        if OUTLIER_RULES["OperatingIncome"][0] == "yoy" and "outlier" in flags_ebit:
-            flags_ebit.remove("outlier")
-        if OUTLIER_RULES["InterestExpense"][0] == "yoy" and "outlier" in flags_int:
-            flags_int.remove("outlier")
-        if len(flags_ebit) != 0 or len(flags_int) != 0:
-            continue
-        years.append(year)
-
-    if not years:
-        return value
-
-    last = max(years)
-    coverage = data[last]["OperatingIncome"]["Value"] / data[last]["InterestExpense"]["Value"]
-    value.update({"Coverage": coverage, "Year": last, "n": len(years), "Source": "Calculated"})
-    return value
-
-
-def synthetic_cost_of_debt(data: dict, rf: float) -> dict:
-    value = {"Cost_of_Debt": None, "Rating": None, "Spread": None, "Coverage": None, "Year": None, "Source": "Unavailable"}
-    coverage = interest_coverage(data)
-    if coverage["Coverage"] is None:
-        return value
-    rating = synthetic_rating(coverage["Coverage"])
-    value.update({
-        "Cost_of_Debt": rf + rating["Spread"], "Rating": rating["Rating"], "Spread": rating["Spread"],
-        "Coverage": coverage["Coverage"], "Year": coverage["Year"], "Source": "Calculated",
-    })
-    return value
-
-
 def own_numbers(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str) -> dict:
     data = get_data(symbol, start_year)
     wacc = calc_wacc(data, symbol, freq, n, as_of=as_of)
@@ -166,7 +99,7 @@ def own_numbers(symbol: str, start_year: int, years: int, freq: str, n: int, as_
         "WACC": wacc["WACC"], "ROIC": returns["ROIC_Median"], "ROIC_Source": returns["Source"],
         "Implied_Multiple": valuation["Implied_Multiple"], "Value_Per_Share": valuation["Value_Per_Share"],
         "Data_Filed": valuation["Data_Filed"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "RF_Date": rf["Date"],
-        "Synthetic": synthetic_cost_of_debt(data, rf["Risk_Free_Rate"]),
+        "Synthetic": synthetic_cost_of_debt(data, rf),
     }
 
 

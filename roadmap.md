@@ -1748,7 +1748,7 @@ step 6b scoped and rejected the first, step 7 closed the second.
 explicitly rejected in writing — **before Phase 4**, because a dashboard freezes the output format
 and makes changes to `logic/` visible in a way that turns cheap edits expensive:
 
-1. **Realised versus marginal cost of debt** (step 8, finding 1). Apple +4bp, P&G +16bp, Boeing
+1. **CLOSED (step 14) — realised versus marginal cost of debt** (step 8, finding 1). Apple +4bp, P&G +16bp, Boeing
    +21bp on WACC if switched to the synthetic rate, arithmetic on the printed weights. Either wire
    `synthetic_cost_of_debt` into `wacc_calculation.py` as the basis, or record that the realised
    rate stays and why.
@@ -2243,6 +2243,73 @@ shift.
 
 **Learning goals:** master sensitivity analysis as a valuation tool; for Monte Carlo,
 understand random distributions and sampling, not just call a library function.
+
+#### Step 14 — the cost-of-debt basis — DONE
+
+Item 1 of the four carried out of Phase 2. `cost_of_debt` measured interest expense over average
+debt, i.e. the coupon on the existing stack. A DCF discounts ten years forward, so the fremdkapital
+leg has to be the rate new debt would cost, not the rate old debt does. The definitional error was
+the reason to act; the measured size was not.
+
+**Decision: the synthetic rate is the basis, with an explicit and visible fallback.**
+`synthetic_cost_of_debt` now lives in `wacc_calculation.py`, together with the `SPREADS` table and
+`synthetic_rating` that moved over from `damodaran.py`. `calc_wacc` tries the synthetic first and
+only falls back to the realised chain (2023+, then 2018+) when the synthetic is not usable.
+
+**Two rejection cases, kept distinct.** `Unavailable` means no year survived the flag filter — the
+same filter `cost_of_debt` uses, yoy outliers removed. `Below_Investment_Grade` means the coverage
+was computed and lands under `INVESTMENT_GRADE = 2.5`, the lower bound of the Baa2/BBB row. The
+second is the substantive one: below investment grade the spread prices default, while the model's
+own terminal value assumes the same company grows at 2.5% forever. Discounting a going concern at a
+default-grade rate is internally inconsistent, so the model refuses that input rather than using it.
+The consequence, and it belongs in the README: **this model cannot value a distressed company.**
+
+**The rejected number is still reported.** `COD_Basis`, `COD_Alternative` and `COD_Evidence`
+(rating, coverage, year, n) are carried out of `calc_wacc` and through `dcf_value`. Boeing's WACC
+therefore states in the output that it stands on a fallback and what the synthetic would have said.
+Without those keys Boeing's 4.73% is indistinguishable from Microsoft's measured rate — the same
+failure the `unchecked` flag exists to prevent.
+
+**The spread table had to move, not be copied.** Step 8 recorded that nothing in `logic/` reads
+`damodaran.py`, so the cross-check can never quietly become a model input. That guarantee now holds
+only for `DAMODARAN`, the sector rows. `SPREADS` is a market data table and became a model input, so
+it moved into `logic/` and `damodaran.py` imports it from there. Two copies would drift at the next
+Damodaran vintage and the check would then verify the model against its own stale duplicate.
+
+Measured, `as_of = 2026-08-19`, `start_year = 2016`, settings from `ASSUMPTIONS`:
+
+| Symbol | COD before | COD after | Basis | coverage (year) | W_Debt | WACC before | WACC after | VPS before | VPS after |
+|---|---|---|---|---|---|---|---|---|---|
+| apple | 2.71% | 5.05% | Synthetic, Aaa/AAA | 29.06x (2023) | 2.12% | 8.9957% | 9.0329% | 133.44 | 132.80 |
+| microsoft | 5.03% | 5.05% | Synthetic, Aaa/AAA | 53.89x (2025) | 1.23% | 9.1527% | 9.1529% | 288.02 | 288.01 |
+| procter_gamble | 2.71% | 5.05% | Synthetic, Aaa/AAA | 22.55x (2025) | 9.25% | 6.6973% | 6.8597% | 143.86 | 138.73 |
+| tesla | 4.66% | 5.05% | Synthetic, Aaa/AAA | 12.88x (2025) | 0.69% | 11.2545% | 11.2566% | 11.60 | 11.60 |
+| boeing | 4.73% | 4.73% | Realised_Fallback | -0.31x (2023) | 26.85% | 7.8280% | 7.8280% | 48.42 | 48.42 |
+
+**The synthetic does not discriminate at the top of the table.** Four of five land on the same
+5.05%, `rf` 4.65% plus the 40bp Aaa/AAA spread, because the spread table saturates above 8.5x
+coverage and all four sit between 12.88x and 53.89x. The company-specific information sits in the
+realised rate (Apple 2.71% against Microsoft 5.03%) and is exactly the backward-looking part the
+switch removes. That is a real cost of the decision, not a footnote: the model now prices the debt
+of four very different balance sheets identically. It is accepted because the debt weights are
+0.69% to 9.25% there, so the effect on WACC is 0 to 16bp.
+
+**Boeing is the reason the fallback exists, not an exception to the rule.** A blanket switch would
+have taken its WACC 7.83% → 11.64% and its value per share 48.42 → 7.41, a loss of 84.7%, against a
+market price of 231.67 and external DCF ranges of 160-390. The synthetic is not wrong about Boeing
+in 2023; it is a default-grade rate applied to a going-concern model, and step 14 rejects the
+combination rather than the number.
+
+**Golden values reset for four of five, Boeing untouched.** `GOLDEN` moves on apple, microsoft,
+procter_gamble and tesla; `MC_GOLDEN` on the same four. Boeing passing all seven tests unchanged was
+the control that the edit touched only the debt leg. Two MC readings changed enough to record:
+P&G's `P_Above_Market` falls from 51.65% to 39.90% and its median from 145.31 to 140.11 — the one
+company whose distribution straddled the market now sits below it more often than above. Apple's
+median moves 132.05 → 131.42, Microsoft's and Tesla's move in the last decimals only.
+
+**Item 2 is now labelled, not solved.** Boeing keeps 4.73% off a 2023 window with `n = 5`; what it
+gained is a `COD_Basis` saying so. The written justification for accepting a flagged fallback at a
+26.85% debt weight is the next item.
 
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report

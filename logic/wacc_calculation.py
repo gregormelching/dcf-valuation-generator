@@ -9,6 +9,30 @@ from prices import N_MONTHS, risk_free_rate
 EQUITY_RISK_PREMIUM = 0.0428
 COD_START_YEAR = 2023
 COD_FALLBACK_START_YEAR = 2018
+SPREADS = [
+    (-100000.0, 0.199999, "D2/D", 0.1900),
+    (0.2, 0.649999, "C2/C", 0.1600),
+    (0.65, 0.799999, "Ca2/CC", 0.1261),
+    (0.8, 1.249999, "Caa/CCC", 0.0885),
+    (1.25, 1.499999, "B3/B-", 0.0509),
+    (1.5, 1.749999, "B2/B", 0.0321),
+    (1.75, 1.999999, "B1/B+", 0.0275),
+    (2.0, 2.2499999, "Ba2/BB", 0.0184),
+    (2.25, 2.49999, "Ba1/BB+", 0.0138),
+    (2.5, 2.999999, "Baa2/BBB", 0.0111),
+    (3.0, 4.249999, "A3/A-", 0.0089),
+    (4.25, 5.499999, "A2/A", 0.0078),
+    (5.5, 6.499999, "A1/A+", 0.0070),
+    (6.5, 8.499999, "Aa2/AA", 0.0055),
+    (8.5, 100000.0, "Aaa/AAA", 0.0040),
+]
+INVESTMENT_GRADE = 2.5
+
+def synthetic_rating(coverage: float) -> dict:
+    for low, high, rating, spread in SPREADS:
+        if low <= coverage <= high:
+            return {"Rating": rating, "Spread": spread, "Source": "Damodaran large cap"}
+    raise ValueError(f"Coverage ratio {coverage} outside the spread table.")
 
 def cost_of_debt(data: dict, start_year: int = COD_START_YEAR) -> dict:
     value = {"Cost_of_Debt": 0, "n": 0, "Source": ""}
@@ -105,18 +129,73 @@ def cost_of_equity(beta: dict, rf: dict, erp: float = EQUITY_RISK_PREMIUM) -> di
     
     return value
 
+def synthetic_cost_of_debt(data: dict, rf: dict) -> dict:
+    value = {}
+    candidates = []    
+    
+    for year in data:
+        
+        oi = data[year]["OperatingIncome"]
+        ie = data[year]["InterestExpense"]
+        flags_OI = [flag for flag in oi["Flag"]]
+        flags_IE = [flag for flag in ie["Flag"]]
+        
+        if ie["Value"] in (0, None) or oi["Value"] is None: continue
+        if OUTLIER_RULES["InterestExpense"][0] == "yoy" and "outlier" in flags_IE:
+            flags_IE.remove("outlier")
+        if OUTLIER_RULES["OperatingIncome"][0] == "yoy" and "outlier" in flags_OI:
+            flags_OI.remove("outlier")
+        if len(flags_OI) != 0 or len(flags_IE) != 0: continue
+        
+        candidates.append(year)
+    
+    if len(candidates) == 0: coverage = {"Coverage": None, "Year": None, "n": 0, "Source": "Unavailable"}
+    else: 
+        last_year = max(candidates)
+        cov_ratio = data[last_year]["OperatingIncome"]["Value"] / data[last_year]["InterestExpense"]["Value"]
+        coverage = {"Coverage": cov_ratio, "Year": last_year, "n": len(candidates), "Source": "Calculated"}
+        if coverage["Coverage"] < INVESTMENT_GRADE: coverage.update({"Source": "Below_Investment_Grade"})
+    
+    if coverage["Source"] == "Unavailable": 
+        synth_cost = None
+        rating = None
+        spread = None
+    else:    
+        spread_entry = synthetic_rating(coverage["Coverage"])
+        spread = spread_entry["Spread"]
+        rating = spread_entry["Rating"]
+        synth_cost = rf["Risk_Free_Rate"] + spread
+
+    value.update({"Cost_of_Debt": synth_cost, "Rating": rating, "Spread": spread})
+    
+    return value | coverage
+
 def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RISK_PREMIUM, as_of: str | None = None) -> dict:
     value = {"WACC": 0, "WACC_Low": 0, "WACC_High": 0, "Cost_of_Equity": 0, "Cost_of_Debt": 0, "Cost_of_Debt_After_Tax": 0, "Weight_Equity": 0, "Weight_Debt": 0, "Beta": 0, "Risk_Free_Rate": 0, "ERP": 0, "COD_Source": 0, "Source": "", "RF_Date": "", "RF_Fetched_At": ""}
     if as_of is None: as_of = datetime.now().strftime("%Y-%m-%d")
     rf = risk_free_rate(as_of)
     beta = adjusted_beta(data, symbol, freq, n, as_of)
     cost_equity = cost_of_equity(beta, rf, erp)
-    cost_debt = cost_of_debt(data, COD_START_YEAR)
-    cod_source = COD_START_YEAR
-    if cost_debt["Source"] == "Insufficient": 
-        cost_debt = cost_of_debt(data, COD_FALLBACK_START_YEAR)
-        cod_source = COD_FALLBACK_START_YEAR
-    if cost_debt["Source"] == "Insufficient": raise ValueError("Insufficient Data")
+    synth = synthetic_cost_of_debt(data, rf)
+    fallback = cost_of_debt(data, COD_START_YEAR)
+    
+    if synth["Source"] == "Calculated":
+        cost_debt = synth
+        cod_basis = "Synthetic"
+        cod_alternative = fallback["Cost_of_Debt"]
+        if fallback["Source"] == "Insufficient": cod_alternative = cost_of_debt(data, COD_FALLBACK_START_YEAR)["Cost_of_Debt"]
+        cod_source = None
+    else: 
+        cost_debt = fallback
+        cod_source = COD_START_YEAR    
+        if cost_debt["Source"] == "Insufficient": 
+            cost_debt = cost_of_debt(data, COD_FALLBACK_START_YEAR)
+            cod_source = COD_FALLBACK_START_YEAR
+        if cost_debt["Source"] == "Insufficient": raise ValueError("Insufficient Data")
+        cod_basis = f"Realised_Fallback+{synth["Source"]}"
+        cod_alternative = synth["Cost_of_Debt"]
+    cod_evidence = {"Rating": synth["Rating"], "Coverage": synth["Coverage"], "Year": synth["Year"], "n": synth["n"]}
+        
     de = debt_to_equity(data, symbol, None, as_of)
     weight_equity = 1 / (1 + de)
     weight_debt = de / (1 + de)
@@ -125,13 +204,14 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
     wacc_high = weight_equity * cost_equity["CI_High"] + weight_debt * after_tax_debt
     wacc = weight_equity * cost_equity["Cost_of_Equity"] + weight_debt * after_tax_debt
     
-    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source), "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"]})
+    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source) if cod_source is not None else beta["Source"], "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"], "COD_Basis": cod_basis, "COD_Alternative": cod_alternative, "COD_Evidence": cod_evidence})
         
     return value
 
 if __name__ == "__main__":
     as_of = "2026-08-19"
-    data = get_data("microsoft", 2016) 
-    beta = adjusted_beta(data, "microsoft", "1mo", N_MONTHS, as_of)
+    data = get_data("apple", 2016) 
+    beta = adjusted_beta(data, "apple", "1mo", N_MONTHS, as_of = as_of)
     rf = risk_free_rate(as_of)
-    print(calc_wacc(data, "microsoft", "1mo", N_MONTHS, EQUITY_RISK_PREMIUM, as_of))
+    print(calc_wacc(data, "apple", "1mo", N_MONTHS, as_of = as_of))
+    print(synthetic_cost_of_debt(data, rf))
