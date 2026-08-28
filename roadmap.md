@@ -1752,9 +1752,9 @@ and makes changes to `logic/` visible in a way that turns cheap edits expensive:
    +21bp on WACC if switched to the synthetic rate, arithmetic on the printed weights. Either wire
    `synthetic_cost_of_debt` into `wacc_calculation.py` as the basis, or record that the realised
    rate stays and why.
-2. **Boeing's cost of debt has no usable evidence** (step 8, finding 2). Newest clean year is 2023
-   with negative EBIT, coverage -0.31x, synthetic D2/D at 23.68%. Highest debt weight of the five
-   (26.85%) and the least defensible single input in the set.
+2. **CLOSED (step 15) — Boeing's cost of debt has no usable evidence** (step 8, finding 2). The
+   year selection read 2023 (coverage -0.31x, D2/D) past the newest reading, and the fallback stood
+   on the legacy coupon. Both fixed; Boeing 4.73% → 5.76%, WACC +21bp, value per share 48.42 → 44.68.
 3. **Prices have no staleness bound** (below). Max 30bp on the equity weight, measured.
 4. **The fade start is unfiltered, the fade target is not** (step 4c).
 
@@ -2310,6 +2310,101 @@ median moves 132.05 → 131.42, Microsoft's and Tesla's move in the last decimal
 **Item 2 is now labelled, not solved.** Boeing keeps 4.73% off a 2023 window with `n = 5`; what it
 gained is a `COD_Basis` saying so. The written justification for accepting a flagged fallback at a
 26.85% debt weight is the next item.
+
+#### Step 15 — Boeing's cost of debt — DONE
+
+Item 2 of the four carried out of Phase 2, and the direct continuation of step 14. Boeing was the
+only company on the fallback path, so its cost of debt was still what step 14 had just rejected for
+everyone else: the coupon on debt issued between 2016 and 2021, applied to a ten-year projection,
+on the company with the highest debt weight of the five (26.85%).
+
+**Two separate defects, found by measurement rather than by reading the code.**
+
+*The year selection read past the newest data point.* `synthetic_cost_of_debt` takes `max()` over the
+flag-clean years, and Boeing's 2024 and 2025 `OperatingIncome` both carry `outlier` — the
+`margin_change_pp 0.07` rule fires on the recovery itself. The function therefore reported coverage
+-0.31x from 2023 while the newest reading was +1.54x from 2025. The guard that should have caught
+this existed since step 14 but tested `OUTLIER_RULES["OperatingIncome"][0] == "yoy"`, and the rule
+is `margin_change_pp`, so it never fired. A dead guard, invisible in every test, because
+`COD_Evidence` is not pinned in `test_golden_values.py`.
+
+The fix drops the `margin_change_pp` outlier from the `OperatingIncome` flags the same way
+`cost_of_debt` already drops `yoy` — the argument is identical: that rule marks a *change*, not an
+implausible level, and a company recovering from a loss is exactly the case where the change is the
+signal. `recon`, `unchecked` and everything else still disqualify a year. Measured effect on the
+other four: none. All keep their rating and their year; only `n` rises (Apple 5 → 8, the rest to 10).
+
+*The fallback had no floor.* Below investment grade the model refuses the synthetic spread because
+it prices default while the terminal value assumes 2.5% growth forever — step 14's argument. But
+without a floor it then falls back to whatever the old bonds happen to cost, which asserts that a
+sub-investment-grade issuer borrows at its own investment-grade-era coupon. **The floor is
+`rf + spread` of the Baa2/BBB row, taken from `synthetic_rating(INVESTMENT_GRADE)`, and the used
+rate is the larger of that and the realised rate.** No new constant: a second constant holding the
+spread would drift out of step with `INVESTMENT_GRADE` at the next Damodaran vintage, and the model
+would then discount at a boundary that no longer exists in `SPREADS`. The `max` matters in the other
+direction — an issuer already paying more than BBB has measured evidence of it, and a fixed floor
+would throw that away in precisely the case it is needed.
+
+**Why this is the right size of correction, measured.** The full plausible range of the cost of debt
+moves Boeing's value per share from 50.55 to 37.89 against a market price of 231.67:
+
+| basis | cost of debt | WACC | value per share |
+|---|---|---|---|
+| realised 2016+ | 4.18% | 7.7166% | 50.55 |
+| realised 2018+ | 4.30% | 7.7411% | 50.07 |
+| realised 2023+ (before) | 4.73% | 7.8280% | 48.42 |
+| **Baa2/BBB floor (after)** | **5.76%** | **8.0358%** | **44.68** |
+| synthetic on 2025, 1.54x, B2/B | 7.86% | 8.4587% | 37.89 |
+| synthetic on 2023, -0.31x, D2/D | 23.65% | 11.6385% | 7.41 |
+
+Item 2 called this "the least defensible single input in the set" and that was accurate; calling it
+Boeing's problem would not have been. The model is off by a factor of five on Boeing, and the cost
+of debt cannot account for more than 13 of those points. The causes stay where step 3d put them:
+beta 1.108 out of a regression with R² = 0.29, and a 27% debt weight built on book value.
+
+**The model's own projection says Boeing is sub-investment-grade for five more years.** At interest
+expense of 2.771bn the projected EBIT implies forward coverage of 1.72x in 2026, crossing 2.5x only
+in 2031. Discounting that path at an investment-grade floor is already generous; discounting it at
+the 2016-2021 coupon was indefensible. Rated per projected year: B2/B, B1/B+, Ba2/BB, Ba2/BB,
+Ba1/BB+, then Baa2/BBB.
+
+**The floor is an assumption and the roadmap should say so plainly.** It asserts that Boeing borrows
+at no worse than BBB, which is probably too generous — new issues price closer to 5.5-6.5% by market
+knowledge that is not in the model and not obtainable from EDGAR. It is more conservative than the
+status quo and less conservative than an honest market read, and `COD_Basis` reads
+`IG_Floor+Below_Investment_Grade` so the choice is visible in every report rather than buried.
+
+**`COD_Evidence` gained a `Realised` key.** On the floor path the measured 4.73% is otherwise gone
+from the output entirely: `Cost_of_Debt` holds the floor, `COD_Alternative` the rejected synthetic
+7.86%, and the only number actually measured from filings would have vanished. Same principle as
+`unchecked` — the rejected reading stays visible. On the synthetic path the key duplicates
+`COD_Alternative`; that redundancy is the price of `COD_Evidence` being readable on its own.
+
+`calc_wacc` also stopped reassigning `cost_debt` and now carries `cod_used`, `cod_realised` and
+`cod_border` separately. Overwriting `cost_debt` with the floor would have left `cost_debt["n"]` and
+`cost_debt["Source"]` attached to a number they no longer describe — the flag convention applied to
+a local variable.
+
+Measured, `as_of = 2026-08-19`, `start_year = 2016`, settings from `ASSUMPTIONS`. Boeing only; the
+other four are byte-identical and served as the control:
+
+| field | before | after |
+|---|---|---|
+| `Cost_of_Debt` | 4.728185% | 5.76% |
+| `COD_Basis` | Realised_Fallback+Below_Investment_Grade | IG_Floor+Below_Investment_Grade |
+| `COD_Alternative` | 23.65% | 7.86% |
+| `COD_Evidence` | D2/D, -0.31x, 2023, n=5 | B2/B, 1.54x, 2025, n=10, Realised 4.73% |
+| `WACC` | 7.827978% | 8.035768% |
+| `Value_Per_Share` | 48.417191 | 44.677033 |
+| `Implied_Multiple` | 7.81x | 7.52x |
+| `TV_Share` | 73.27% | 72.37% |
+| MC median | 43.38 | 39.86 |
+| MC mean | 45.08 | 41.38 |
+
+`P_Above_Market` stays 0.0, `WACC_Sigma` and `Margin_Range` are untouched — the equity leg was not
+part of this step. Seven Boeing assertions failed, sixty-three passed, and that split was the
+verification: any movement in the other four would have meant the flag change was broader than
+intended.
 
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report

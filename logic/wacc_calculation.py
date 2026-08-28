@@ -143,7 +143,7 @@ def synthetic_cost_of_debt(data: dict, rf: dict) -> dict:
         if ie["Value"] in (0, None) or oi["Value"] is None: continue
         if OUTLIER_RULES["InterestExpense"][0] == "yoy" and "outlier" in flags_IE:
             flags_IE.remove("outlier")
-        if OUTLIER_RULES["OperatingIncome"][0] == "yoy" and "outlier" in flags_OI:
+        if OUTLIER_RULES["OperatingIncome"][0] == "margin_change_pp" and "outlier" in flags_OI:
             flags_OI.remove("outlier")
         if len(flags_OI) != 0 or len(flags_IE) != 0: continue
         
@@ -185,6 +185,8 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
         cod_alternative = fallback["Cost_of_Debt"]
         if fallback["Source"] == "Insufficient": cod_alternative = cost_of_debt(data, COD_FALLBACK_START_YEAR)["Cost_of_Debt"]
         cod_source = None
+        cod_realised = cod_alternative
+        cod_used = synth["Cost_of_Debt"]
     else: 
         cost_debt = fallback
         cod_source = COD_START_YEAR    
@@ -192,19 +194,27 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
             cost_debt = cost_of_debt(data, COD_FALLBACK_START_YEAR)
             cod_source = COD_FALLBACK_START_YEAR
         if cost_debt["Source"] == "Insufficient": raise ValueError("Insufficient Data")
-        cod_basis = f"Realised_Fallback+{synth["Source"]}"
+        cod_realised = cost_debt["Cost_of_Debt"]
+        cod_border = rf["Risk_Free_Rate"] + synthetic_rating(INVESTMENT_GRADE)["Spread"]
         cod_alternative = synth["Cost_of_Debt"]
-    cod_evidence = {"Rating": synth["Rating"], "Coverage": synth["Coverage"], "Year": synth["Year"], "n": synth["n"]}
+        
+        if cod_border > cod_realised: 
+            cod_used = cod_border
+            cod_basis = f"IG_Floor+{synth["Source"]}"
+        else:
+            cod_used = cod_realised
+            cod_basis = f"Realised_Fallback+{synth["Source"]}"
+    cod_evidence = {"Rating": synth["Rating"], "Coverage": synth["Coverage"], "Year": synth["Year"], "n": synth["n"], "Realised": cod_realised}
         
     de = debt_to_equity(data, symbol, None, as_of)
     weight_equity = 1 / (1 + de)
     weight_debt = de / (1 + de)
-    after_tax_debt = cost_debt["Cost_of_Debt"] * (1 - MARGINAL_TAX_RATE)
+    after_tax_debt = cod_used * (1 - MARGINAL_TAX_RATE)
     wacc_low = weight_equity * cost_equity["CI_Low"] + weight_debt * after_tax_debt
     wacc_high = weight_equity * cost_equity["CI_High"] + weight_debt * after_tax_debt
     wacc = weight_equity * cost_equity["Cost_of_Equity"] + weight_debt * after_tax_debt
     
-    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cost_debt["Cost_of_Debt"], "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source) if cod_source is not None else beta["Source"], "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"], "COD_Basis": cod_basis, "COD_Alternative": cod_alternative, "COD_Evidence": cod_evidence})
+    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cod_used, "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source) if cod_source is not None else beta["Source"], "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"], "COD_Basis": cod_basis, "COD_Alternative": cod_alternative, "COD_Evidence": cod_evidence})
         
     return value
 
