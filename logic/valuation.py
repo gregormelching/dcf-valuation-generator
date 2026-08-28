@@ -2,6 +2,7 @@ from model import project_fcf, TERMINAL_GROWTH, driver_ratio
 from datetime import datetime
 from wacc_calculation import calc_wacc, N_MONTHS
 from database import get_data, get_prices
+from prices import price_reference
 import random
 
 ASSUMPTIONS = {
@@ -112,8 +113,8 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
     filed = [data[year][metric_name]["Filed"] for year in data for metric_name in data[year] if data[year][metric_name]["Filed"] is not None]
     data_filed = max(filed) if filed else None
     as_of_key = datetime.strftime(as_of, "%Y-%m-%d")
-    price_date, market_price = get_prices(symbol, MARKET_PRICE_FREQ, 1, as_of_key)[-1]
-    price_age = (as_of - datetime.strptime(price_date, "%Y-%m-%d")).days
+    ref_data = price_reference(symbol, MARKET_PRICE_FREQ, as_of_key)
+    price_date, market_price, price_age = ref_data["Date"], ref_data["Price"], ref_data["Age"]
             
     for w in waccs:
         t_roic = terminal_roic
@@ -142,7 +143,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
             tv_share = PV_tv / (PV_Explicit + PV_tv)
         else: tv_share_source = " and ".join([name for name, pv in [("PV_Explicit", PV_Explicit), ("PV_tv", PV_tv)] if pv <= 0]) + " <= 0"
 
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"]}
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"]}
         
     return value
 

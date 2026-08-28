@@ -4,7 +4,7 @@ from model import MIN_YEARS, MARGINAL_TAX_RATE
 import statistics as stats
 import math
 from validation import OUTLIER_RULES
-from prices import N_MONTHS, risk_free_rate
+from prices import N_MONTHS, risk_free_rate, price_reference
 
 EQUITY_RISK_PREMIUM = 0.0428
 COD_START_YEAR = 2023
@@ -89,10 +89,10 @@ def debt_to_equity(data: dict, symbol: str, year: int | None, as_of: str) -> flo
     else: debt_year = year
     if data[debt_year]["Debt"]["Value"] in (0, None) or data[debt_year]["SharesOutstanding"]["Value"] in (0, None): raise ValueError("Missing Debt or SharesOutstanding value")
     
-    prices = dict(get_prices(symbol, "1mo", N_MONTHS, as_of))
-    
-    if year is None: close = list(prices.items())[-1][1]
-    else: close = [i[1] for i in prices.items() if i[0].startswith(f"{year}-12")][-1]
+    if year is None: close = price_reference(symbol, "1mo", as_of)["Price"]
+    else: 
+        prices = dict(get_prices(symbol, "1mo", N_MONTHS, as_of))
+        close = [i[1] for i in prices.items() if i[0].startswith(f"{year}-12")][-1]
     
     market_cap = data[debt_year]["SharesOutstanding"]["Value"] * close
     
@@ -180,7 +180,6 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
     fallback = cost_of_debt(data, COD_START_YEAR)
     
     if synth["Source"] == "Calculated":
-        cost_debt = synth
         cod_basis = "Synthetic"
         cod_alternative = fallback["Cost_of_Debt"]
         if fallback["Source"] == "Insufficient": cod_alternative = cost_of_debt(data, COD_FALLBACK_START_YEAR)["Cost_of_Debt"]
@@ -213,8 +212,9 @@ def calc_wacc(data: dict, symbol: str, freq: str, n: int, erp: float = EQUITY_RI
     wacc_low = weight_equity * cost_equity["CI_Low"] + weight_debt * after_tax_debt
     wacc_high = weight_equity * cost_equity["CI_High"] + weight_debt * after_tax_debt
     wacc = weight_equity * cost_equity["Cost_of_Equity"] + weight_debt * after_tax_debt
-    
-    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cod_used, "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source) if cod_source is not None else beta["Source"], "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"], "COD_Basis": cod_basis, "COD_Alternative": cod_alternative, "COD_Evidence": cod_evidence})
+    ref_data = price_reference(symbol, "1mo", as_of)
+
+    value.update({"WACC": wacc, "WACC_High": wacc_high, "WACC_Low": wacc_low, "Cost_of_Equity": cost_equity["Cost_of_Equity"], "Cost_of_Debt": cod_used, "Cost_of_Debt_After_Tax": after_tax_debt, "Weight_Equity": weight_equity, "Weight_Debt": weight_debt, "Beta": beta["Beta"], "Risk_Free_Rate": rf["Risk_Free_Rate"], "ERP": erp, "COD_Source": cod_source, "Source": beta["Source"] + "+" + str(cod_source) if cod_source is not None else beta["Source"], "RF_Date": rf["Date"], "RF_Fetched_At": rf["Fetched_At"], "COD_Basis": cod_basis, "COD_Alternative": cod_alternative, "COD_Evidence": cod_evidence, "MCap_Price_Date": ref_data["Date"], "MCap_Price_Age_Days": ref_data["Age"]})
         
     return value
 
@@ -223,5 +223,4 @@ if __name__ == "__main__":
     data = get_data("apple", 2016) 
     beta = adjusted_beta(data, "apple", "1mo", N_MONTHS, as_of = as_of)
     rf = risk_free_rate(as_of)
-    print(calc_wacc(data, "apple", "1mo", N_MONTHS, as_of = as_of))
-    print(synthetic_cost_of_debt(data, rf))
+    print(debt_to_equity(data, "apple", None, as_of = as_of))

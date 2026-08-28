@@ -1755,7 +1755,10 @@ and makes changes to `logic/` visible in a way that turns cheap edits expensive:
 2. **CLOSED (step 15) — Boeing's cost of debt has no usable evidence** (step 8, finding 2). The
    year selection read 2023 (coverage -0.31x, D2/D) past the newest reading, and the fallback stood
    on the legacy coupon. Both fixed; Boeing 4.73% → 5.76%, WACC +21bp, value per share 48.42 → 44.68.
-3. **Prices have no staleness bound** (below). Max 30bp on the equity weight, measured.
+3. **CLOSED (step 16) — prices have no staleness bound** (below). `PRICE_MAX_AGE_DAYS` bounds both
+   price reads, both dates are reported, and the bound is pinned by a test. The measured finding was
+   not the stale price but the two prices: the weights stand on a 19-day-old close, the reference
+   price on a 5-day-old one.
 4. **The fade start is unfiltered, the fade target is not** (step 4c).
 
 - **CLOSED — the Damodaran cross-check** (step 8). WACC within 70bp of the sector cost of capital
@@ -1810,7 +1813,8 @@ and makes changes to `logic/` visible in a way that turns cheap edits expensive:
   a full month of price staleness moves the equity weight by at most 30bp (Microsoft -29.9bp at a
   +24.6% monthly move, Tesla +17.9bp at -26.0%, Boeing +3.0bp), because the weights sit at 73-99%
   equity and barely respond. The value is closing the last hole in the vintage chain, not accuracy.
-  The bound must be wider than the rate's ten days — monthly data needs roughly 45.
+  The bound must be wider than the rate's ten days — monthly data needs roughly 45. Taken up in
+  step 16, where the measured finding turned out to be the two prices, not the one stale price.
 - **CLOSED — `prev_rev` in `project_fcf`** (step 4d). The assignment now sits immediately before the
   `if i == years` block, so it no longer picks up the terminal revenue. Worth keeping on record
   because the first attempt moved it one level in rather than one line up, which put it inside
@@ -2405,6 +2409,112 @@ other four are byte-identical and served as the control:
 part of this step. Seven Boeing assertions failed, sixty-three passed, and that split was the
 verification: any movement in the other four would have meant the flag change was broader than
 intended.
+
+#### Step 16 — the price staleness bound — DONE
+
+Item 3 of the four carried out of Phase 2, and the last hole in the vintage chain. The rate path has
+refused data older than `RF_MAX_AGE_DAYS = 10` since step 3a-1; the price path had no equivalent, so
+a valuation could mix a ten-day-old rate with an arbitrarily old market cap and report neither fact.
+
+**The measured finding is not the stale price, it is that there are two of them.** At
+`as_of = 2026-08-19` the newest close is identical for all six symbols: 2026-07-31 on `1mo` (19 days)
+and 2026-08-14 on `1wk` (5 days). `debt_to_equity` builds the market cap from the monthly close,
+`dcf_value` prices `Upside` off the weekly one, and the two disagree by more than the staleness
+question ever could:
+
+| Symbol | `1mo` close (2026-07-31) | `1wk` close (2026-08-14) | gap |
+|---|---|---|---|
+| apple | 308.64 | 305.93 | -0.9% |
+| microsoft | 464.72 | 495.40 | +6.6% |
+| procter_gamble | 144.49 | 144.55 | +0.0% |
+| tesla | 311.21 | 342.27 | +10.0% |
+| boeing | 216.14 | 231.67 | +7.2% |
+
+The same report therefore states an upside against one price and weights the WACC against another.
+Arithmetic on the printed weights: moving Boeing's market cap to the weekly close takes `W_Debt`
+26.85% → 25.51% and the WACC 8.0358% → roughly 8.10%, about +7bp — it is the only one of the five
+where the debt weight is large enough for the gap to reach the WACC at all. The Phase 2 note sized
+this item at "max 30bp, closing the vintage chain, not accuracy", and that framing was right about
+the size and wrong about the defect.
+
+**`PRICE_MAX_AGE_DAYS` is a dict over `freq`, not a scalar** — `{"1mo": 45, "1wk": 14}` in
+`prices.py`. A single number cannot serve both: 45 days is no bound at all on a weekly series, and 14
+is a permanent failure on a monthly one. The monthly value follows from the sampling interval, one
+month plus the two weeks a resample can lag the last trading day.
+
+**`price_reference(symbol, freq, as_of)` in `prices.py` reads the newest row and raises past the
+bound. It does not refetch, unlike `risk_free_rate`.** `debt_to_equity` runs once per year of the
+beta window inside `adjusted_beta`, so a yfinance download in the failure path would be a network
+call inside a loop. The ingest stays an explicit run of the `prices.py` `__main__` block; the
+function only refuses. That is a deliberate divergence from the rate path and the reason for it is
+the call site, not the data source.
+
+**The bound applies to the current read only, never to the series.** `debt_to_equity` routes only
+its `year is None` branch through `price_reference`; the `year` branch and `raw_beta` keep reading
+old closes directly, because a December 2019 close is not stale data, it is the regression input. A
+bound placed inside `get_prices` would have killed the beta.
+
+Verified at `as_of = 2026-08-19`: 70 passed, no golden value moved. That was the control — the bound
+must not touch a number at an `as_of` where it does not fire. The boundaries fire as intended:
+`1mo` at `as_of = 2026-09-15` against the 2026-07-31 close (age 46), `1wk` fourteen days past its
+newest close.
+
+**The reporting side, and why it needed its own keys.** `dcf_value` and `calc_wacc` both read
+through `price_reference` now, so both prices are gated and both dates are in the output:
+`Price_Date` / `Price_Age_Days` for the `1wk` reference price, `MCap_Price_Date` /
+`MCap_Price_Age_Days` for the `1mo` close behind the weights. `calc_wacc` calls `price_reference`
+itself rather than taking the date out of `debt_to_equity` — that function returns a float, and
+widening its signature would have dragged `adjusted_beta` along for a value it never uses. Measured
+at `as_of = 2026-08-19`, identical for all five: reference 2026-08-14 at 5 days, market cap
+2026-07-31 at 19 days. Nineteen days is inside the bound and outside the rate's ten — the mix the
+Phase 2 note described is still there, it is now stated in every row instead of nowhere.
+
+**Absence and staleness are separate raises.** `price_reference` wraps the `get_prices` call and
+re-raises with its own message when no row exists at or before `as_of`; the age check produces the
+other one. `get_prices` raises before it returns, so the case cannot be read off a return value —
+the `try` is not decoration. Same distinction as `unchecked` against `recon_unchecked`, and it
+decides whether the answer is an ingest or a corrected `as_of`.
+
+**The bound is pinned, and the pin is derived rather than written down.** `test_price_bound` in
+`tests/test_golden_values.py`, parametrised over `1mo` and `1wk`, reads the newest row through
+`get_prices` with a far-future `as_of`, then builds two dates from it: newest plus the bound, where
+`Age` must equal the bound and nothing may raise, and one day later, where `ValueError` is required.
+`test_price_reference_absence` covers the empty side at `as_of = 2000-01-01`. Cache-only, no `slow`
+mark, 70 tests to 73.
+
+Three things about that test are deliberate. It hangs on no fixture — `result` runs a full
+valuation per symbol and can say nothing about the guard, because a broken bound leaves `dcf_value`
+working perfectly. It asserts the non-raising side too, since a `>=` slip moves the boundary by one
+day and is invisible from the raising side alone. And the dates are computed from the cache instead
+of written into the file: the `1wk` series moved from 2026-08-14 to 2026-08-21 during this step, so
+a hard-coded date would have gone green without testing anything — the mechanism that kept the
+step 15 coverage guard dead. Checked by mutation: raising `PRICE_MAX_AGE_DAYS["1mo"]` to 450 makes
+the test fail, which is the only evidence that it tests anything at all.
+
+**Found while verifying, not caused by this step: the price series is retroactively rewritten.**
+`fetch_prices` downloads with `auto_adjust = True` and `insert_prices` overwrites, so every dividend
+re-adjusts the whole history. Microsoft's 2026-08-14 weekly close was 495.40 before an ingest during
+this step and 494.47 after — a difference of 0.93, one MSFT quarterly dividend, on a date that was
+already in the past. No test saw it because Microsoft's `P_Above_Market` sits at 0.0; the same
+event on P&G, whose distribution straddles the price, would have moved a pinned number with no code
+change behind it. This is the filing-vintage problem on the price path, and it is now the only
+unpinned vintage left after `RF_Date`, `Data_Filed` and the two price dates. Not fixed here: it is
+the same scope as full point-in-time filings, which step 6b scoped and deferred.
+
+**Decided: two prices, both reported.** The market cap keeps the `1mo` series and the reference
+price keeps `MARKET_PRICE_FREQ = "1wk"`. The argument is internal consistency of the WACC leg, not
+freshness: `DE_Window` in `adjusted_beta` averages `debt_to_equity` over the December closes of the
+monthly series, so moving `de_current` to the weekly close would measure the window and the current
+point on two different frequencies inside one beta. The reference price is not a model input — it is
+the external comparison behind `Upside` and `P_Above_Market` — and there the newest close is the
+right one. The gap in the table above therefore stays; what changes is that both dates are now in
+the output, `Price_Date` for the reference and `MCap_Price_Date` for the weights.
+
+Measured cost of getting this backwards, and the reason it is worth a line here: routing `dcf_value`
+through the beta `freq` instead of `MARKET_PRICE_FREQ` moves P&G's market price 144.55 → 144.49, six
+cents, and its `P_Above_Market` 39.9% → 40.1%. One assertion in the pinned Monte Carlo suite caught
+it; the other four companies are unaffected because only P&G's distribution straddles the price at
+all. Without step 13's pinning this would have been a silent change to a headline number.
 
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report

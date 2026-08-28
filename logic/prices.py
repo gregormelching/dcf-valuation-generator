@@ -1,7 +1,7 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
-from database import insert_prices, insert_raw_download, insert_rates, get_rate
+from database import insert_prices, insert_raw_download, insert_rates, get_rate, get_prices
 yf.config.debug.hide_exceptions = False
 import requests as rq
 
@@ -23,6 +23,22 @@ FREQ = {
     "1mo": "ME",
     "1wk": "W-FRI"
 }
+PRICE_MAX_AGE_DAYS = {
+    "1mo": 45,
+    "1wk": 14
+}
+
+def price_reference(symbol: str, freq: str, as_of: str) -> dict: 
+    try:
+        row = get_prices(symbol, freq, 1, as_of)
+    except ValueError as e:
+        raise ValueError(f"Failed to retrieve price data for {symbol} as of {as_of}")
+
+    age = (datetime.strptime(as_of, "%Y-%m-%d") - datetime.strptime(row[0][0], "%Y-%m-%d")).days
+    if age > PRICE_MAX_AGE_DAYS[freq]:
+        raise ValueError(f"Price data for {symbol} is too old. Please update the data.")
+    
+    return {"Price": row[0][1], "Date": row[0][0], "Age": age, "Source": freq, "As_Of": as_of}
 
 def fetch_prices(symbol: str, freq: str) -> list:
     df = yf.Ticker(SYMBOLS[symbol]).history(period = PERIOD, interval = "1d", auto_adjust = True, actions = False)
@@ -77,3 +93,4 @@ def risk_free_rate(as_of = None):
 if __name__ == "__main__":
     for s in SYMBOLS:
         fetch_prices(s, "1wk")
+    print(price_reference("apple", "1mo", "2026-08-19"))

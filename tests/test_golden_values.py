@@ -1,5 +1,8 @@
 import pytest 
+from datetime import datetime, timedelta
 from valuation import dcf_value, monte_carlo
+from prices import price_reference, PRICE_MAX_AGE_DAYS
+from database import get_prices
 from wacc_calculation import N_MONTHS
 
 AS_OF = "2026-08-19"
@@ -9,6 +12,8 @@ FREQ = "1mo"
 REL = 1e-9
 DRAWS = 2000
 SEED = 12345
+BOUND_SYMBOL = "apple"
+FUTURE = "2999-12-31"
 
 MC_GOLDEN = {
     "apple": {
@@ -186,6 +191,21 @@ def test_rf_date(result):
     assert val["wacc_low"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
     assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
     assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
+
+@pytest.mark.parametrize("freq", ["1mo", "1wk"])
+def test_price_bound(freq):
+    newest = datetime.strptime(get_prices(BOUND_SYMBOL, freq, 1, FUTURE)[0][0], "%Y-%m-%d")
+    bound = PRICE_MAX_AGE_DAYS[freq]
+    edge = datetime.strftime(newest + timedelta(days = bound), "%Y-%m-%d")
+    stale = datetime.strftime(newest + timedelta(days = bound + 1), "%Y-%m-%d")
+
+    assert price_reference(BOUND_SYMBOL, freq, edge)["Age"] == bound
+    with pytest.raises(ValueError):
+        price_reference(BOUND_SYMBOL, freq, stale)
+
+def test_price_reference_absence():
+    with pytest.raises(ValueError):
+        price_reference(BOUND_SYMBOL, "1mo", "2000-01-01")
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
