@@ -94,7 +94,7 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
         conn.commit()
 
 def get_data(company: str, start_year: int) -> dict:
-    years = range(start_year, datetime.now().year)
+    years = range(start_year, datetime.now().year + 1)
     values = {}
     query = "SELECT year, metric_name, value, tag, form, end_date, filed, flag FROM data LEFT JOIN flags ON data.id = flags.data_id WHERE company = ?"
     with sqlite3.connect(database) as conn:
@@ -155,6 +155,7 @@ if __name__ == "__main__":
     init_db() 
     for c in companies:
         values = clean_values(get_values(20, c, metrics))
+        values = {year: m for year, m in values.items() if any(slot for metric in m.values() for slot in metric.values())}
         rec_values = clean_values(get_values(20, c, RECON_TAGS))
         reconciled = reconcile_working_capital(values, rec_values)
         flag_vals = validate_values(values)

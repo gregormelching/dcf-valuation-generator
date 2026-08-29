@@ -138,7 +138,9 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     rev = project_revenue(data, years, base, terminal_growth)
     i = 0
     prev_rev = data[last_year]["Revenue"]["Value"]
-    
+    reinvestment_rate = terminal_growth / terminal_roic
+    acc_net_reinvest = 0        
+        
     for year in projected_years:
         i += 1
         m_t = LAST_EBIT_MARGIN + (EBIT_MARGIN - LAST_EBIT_MARGIN) * i / len(projected_years)
@@ -149,21 +151,30 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         da = cur_rev * D_AND_A_MARGIN
         capex = cur_rev * CAP_EX_MARGIN
         dnwc = (cur_rev - prev_rev) * NWC_INTENSITY
-        fcf = nopat + da - capex - dnwc
-        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str})
+        net_reinvest_1 = capex + dnwc - da
+        net_reinvest_2 = reinvestment_rate * nopat
+        w = i / len(projected_years)
+        net_reinvest = net_reinvest_1 * (1 - w) + net_reinvest_2 * w
+        acc_net_reinvest += net_reinvest
+        fcf = nopat - net_reinvest
+        rrate = net_reinvest / nopat if nopat != 0 else None
+        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str, "Reinvestment": net_reinvest, "Reinvestment_Rate": rrate})
         prev_rev = cur_rev
         
         if i == years:
+            r = roic(data)["IC_Last"]
+            cap_basis = r + acc_net_reinvest if r is not None else None
             cur_rev = rev[year]["Revenue"] * (1 + terminal_growth)
             ebit = cur_rev * EBIT_MARGIN
             nopat = ebit * (1- MARGINAL_TAX_RATE)
+            implicit_roic = nopat / cap_basis if cap_basis is not None else None
+            cap_turnover = cur_rev / cap_basis if cap_basis is not None else None
             da = None
             capex = None
             dnwc = None
-            reinvestment_rate = terminal_growth / terminal_roic
             reinvestment = nopat * reinvestment_rate
             fcf = nopat - reinvestment
-            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic, "Tax_Rate": MARGINAL_TAX_RATE, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE})
+            value[year+1].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "Flag": "TV", "EBIT_Margin": EBIT_MARGIN, "Reinvestment": reinvestment, "Reinvestment_Rate": reinvestment_rate, "Terminal_ROIC": terminal_roic, "Tax_Rate": MARGINAL_TAX_RATE, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Implicit_ROIC": implicit_roic, "Capital_Turnover": cap_turnover})
         
     return value
     

@@ -60,13 +60,13 @@ MC_GOLDEN = {
 
 GOLDEN = {
     "apple": {
-        "Value_Per_Share": 132.79924995433032,
+        "Value_Per_Share": 128.17161739600098,
         "WACC": 0.09032896943021052,
-        "EV": 1928525595460.4187,
-        "Low": 148.7645694842523,
-        "High": 120.3281783225311,
+        "EV": 1860146063224.2512,
+        "Low": 143.95323614619946,
+        "High": 115.87434640848096,
         "Implied_Multiple": 9.41545108964314,
-        "TV_Share": 0.49552357194015606,
+        "TV_Share": 0.5137391684092479,
         "Data_Filed": "2025-10-31",
         "RF_Date": "2026-08-19",
         "EBIT_Margin_Start": 0.31970799762591884,
@@ -75,52 +75,61 @@ GOLDEN = {
         "COD_Basis": "Synthetic",
         "COD_Rating": "Aaa/AAA",
         "COD_Year": 2023,
-        "COD_N": 8
+        "COD_N": 8,
+        "ROIC_Consistency": "Consistent",
+        "Implicit_ROIC": 1.2148617875596905,
+        "Capital_Turnover": 5.2084106647789525
     },
     "microsoft": {
-        "Value_Per_Share": 288.0109140958672,
-        "WACC": 0.09152909150854131,
-        "EV": 2074014043442.4573,
-        "Low": 335.66100012669517,
-        "High": 252.62177285299597,
-        "Implied_Multiple": 8.837582530587735,
-        "TV_Share": 0.6127923483953206,
+        "Value_Per_Share": 328.3642752010715,
+        "WACC": 0.09155341740072441,
+        "EV": 2365386863124.8,
+        "Low": 386.4106239417062,
+        "High": 285.17757601629074,
+        "Implied_Multiple": 8.87350279649868,
+        "TV_Share": 0.6097092117858973,
         "Data_Filed": "2026-07-29",
         "RF_Date": "2026-08-19",
-        "EBIT_Margin_Start": 0.4562195624085985,
+        "EBIT_Margin_Start": 0.4678081840892722,
         "Margin_Start_Source": "Last_Actual",
-        "Margin_Start_Year": 2025,
+        "Margin_Start_Year": 2026,
         "COD_Basis": "Synthetic",
         "COD_Rating": "Aaa/AAA",
-        "COD_Year": 2025,
-        "COD_N": 10
+        "COD_Year": 2026,
+        "COD_N": 11,
+        "ROIC_Consistency": "Consistent",
+        "Implicit_ROIC": 0.26873642486859894,
+        "Capital_Turnover": 0.7844028746894307
     },
     "procter_gamble": {
-        "Value_Per_Share": 138.7314197912333,
-        "WACC": 0.06859727085610184,
-        "EV": 349912522208.7438,
-        "Low": 165.67290997311832,
-        "High": 119.54592367383636,
-        "Implied_Multiple": 13.437660512335537,
-        "TV_Share": 0.6224540605026633,
+        "Value_Per_Share": 131.79067292750094,
+        "WACC": 0.06860383894985718,
+        "EV": 330534597152.33014,
+        "Low": 159.43447402137065,
+        "High": 112.12405019947484,
+        "Implied_Multiple": 13.39994806860309,
+        "TV_Share": 0.6456210727606307,
         "Data_Filed": "2026-08-04",
         "RF_Date": "2026-08-19",
-        "EBIT_Margin_Start": 0.24264391818138675,
+        "EBIT_Margin_Start": 0.22690504641970768,
         "Margin_Start_Source": "Last_Actual",
-        "Margin_Start_Year": 2025,
+        "Margin_Start_Year": 2026,
         "COD_Basis": "Synthetic",
         "COD_Rating": "Aaa/AAA",
-        "COD_Year": 2025,
-        "COD_N": 10
+        "COD_Year": 2026,
+        "COD_N": 11,
+        "ROIC_Consistency": "Consistent",
+        "Implicit_ROIC": 0.20798970628721578,
+        "Capital_Turnover": 1.2052134219163597
     },
     "tesla": {
-        "Value_Per_Share": 11.602225457231938,
+        "Value_Per_Share": 15.70870332668901,
         "WACC": 0.1125655849108643,
-        "EV": 7630561891.296151,
-        "Low": 14.574141623731101,
-        "High": 10.166101943732011,
+        "EV": 23039840790.23504,
+        "Low": 19.220661798669237,
+        "High": 13.816664864238733,
         "Implied_Multiple": 3.2999558475896067,
-        "TV_Share": None,
+        "TV_Share": 0.7472993843224384,
         "Data_Filed": "2026-01-29",
         "RF_Date": "2026-08-19",
         "EBIT_Margin_Start": 0.04592573845001951,
@@ -129,16 +138,19 @@ GOLDEN = {
         "COD_Basis": "Synthetic",
         "COD_Rating": "Aaa/AAA",
         "COD_Year": 2025,
-        "COD_N": 10
+        "COD_N": 10,
+        "ROIC_Consistency": "Implicit_ROIC < WACC",
+        "Implicit_ROIC": 0.06427015221417262,
+        "Capital_Turnover": 1.8659152618487096
     },
     "boeing": {
-        "Value_Per_Share": 44.677033352728394,
+        "Value_Per_Share": 50.42512170211479,
         "WACC": 0.08035768255431033,
-        "EV": 66947978401.46039,
-        "Low": 65.45137566220734,
-        "High": 30.284040851431147,
+        "EV": 71462222894.20242,
+        "Low": 71.4352463870118,
+        "High": 35.81026443039082,
         "Implied_Multiple": 7.51868895491711,
-        "TV_Share": 0.7236520181526642,
+        "TV_Share": 0.677939164489497,
         "Data_Filed": "2026-01-30",
         "RF_Date": "2026-08-19",
         "EBIT_Margin_Start": 0.0478521847020556,
@@ -147,7 +159,10 @@ GOLDEN = {
         "COD_Basis": "IG_Floor+Below_Investment_Grade",
         "COD_Rating": "B2/B",
         "COD_Year": 2025,
-        "COD_N": 10
+        "COD_N": 10,
+        "ROIC_Consistency": "Consistent",
+        "Implicit_ROIC": 0.11920315591433801,
+        "Capital_Turnover": 3.3214270614543087
     },
 }
 
@@ -203,18 +218,30 @@ def test_terminal_block(result):
     else: 
         assert val["wacc"]["TV_Share"] == pytest.approx(GOLDEN[sym]["TV_Share"], rel = REL)
 
+def test_terminal_consistency(result):
+    sym = result[0]
+    val = result[1]
+
+    assert val["wacc"]["Implicit_ROIC"] == pytest.approx(GOLDEN[sym]["Implicit_ROIC"], rel = REL)
+    assert val["wacc"]["Capital_Turnover"] == pytest.approx(GOLDEN[sym]["Capital_Turnover"], rel = REL)
+    assert val["wacc_low"]["Implicit_ROIC"] == pytest.approx(GOLDEN[sym]["Implicit_ROIC"], rel = REL)
+    assert val["wacc_high"]["Implicit_ROIC"] == pytest.approx(GOLDEN[sym]["Implicit_ROIC"], rel = REL)
+
+def test_roic_consistency(result):
+    sym = result[0]
+    val = result[1]
+
+    assert val["wacc_low"]["ROIC_Consistency"] == GOLDEN[sym]["ROIC_Consistency"]
+    assert val["wacc"]["ROIC_Consistency"] == GOLDEN[sym]["ROIC_Consistency"]
+    assert val["wacc_high"]["ROIC_Consistency"] == GOLDEN[sym]["ROIC_Consistency"]
+
 def test_tv_share(result):
     sym = result[0]
     val = result[1]
 
-    if sym == "tesla":
-        assert val["wacc_low"]["TV_Share_Source"] == "PV_Explicit <= 0"
-        assert val["wacc"]["TV_Share_Source"] == "PV_Explicit <= 0"
-        assert val["wacc_high"]["TV_Share_Source"] == "PV_Explicit <= 0"
-    else: 
-        assert val["wacc_low"]["TV_Share_Source"] == "Calculated"
-        assert val["wacc"]["TV_Share_Source"] == "Calculated"
-        assert val["wacc_high"]["TV_Share_Source"] == "Calculated"
+    assert val["wacc_low"]["TV_Share_Source"] == "Calculated"
+    assert val["wacc"]["TV_Share_Source"] == "Calculated"
+    assert val["wacc_high"]["TV_Share_Source"] == "Calculated"
         
 def test_data_filed(result):
     sym = result[0]
@@ -232,6 +259,24 @@ def test_rf_date(result):
     assert val["wacc"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
     assert val["wacc_high"]["RF_Date"] == GOLDEN[sym]["RF_Date"]
 
+def test_terminal_growth():
+    dcf = dcf_value(GUARD_SYMBOL, START_YEAR, 10, "1mo", N_MONTHS, terminal_growth = 0.05, as_of = "2026-08-19")
+    
+    assert dcf["wacc_low"]["Terminal_Growth"] == pytest.approx(0.0465, rel = REL)
+    assert dcf["wacc"]["Terminal_Growth"] == pytest.approx(0.0465, rel = REL)
+    assert dcf["wacc_high"]["Terminal_Growth"] == pytest.approx(0.0465, rel = REL)
+    
+    assert dcf["wacc_low"]["Terminal_Growth_Source"] == "Terminal growth ceiling"
+    assert dcf["wacc"]["Terminal_Growth_Source"] == "Terminal growth ceiling"
+    assert dcf["wacc_high"]["Terminal_Growth_Source"] == "Terminal growth ceiling"
+    
+    dcf = dcf_value(GUARD_SYMBOL, START_YEAR, 10, "1mo", N_MONTHS, as_of = "2026-08-19")
+    
+    assert dcf["wacc_low"]["Terminal_Growth_Source"] == "Assumption from TERMINAL_GROWTH"
+    assert dcf["wacc"]["Terminal_Growth_Source"] == "Assumption from TERMINAL_GROWTH"
+    assert dcf["wacc_high"]["Terminal_Growth_Source"] == "Assumption from TERMINAL_GROWTH"
+    
+    
 @pytest.mark.parametrize("freq", ["1mo", "1wk"])
 def test_price_bound(freq):
     newest = datetime.strptime(get_prices(BOUND_SYMBOL, freq, 1, FUTURE)[0][0], "%Y-%m-%d")

@@ -90,11 +90,6 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, te
     
 
 def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0, nwc_intensity: float | None = None, ebit_margin: float | None = None) -> dict:
-    settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics, terminal_growth)
-    base = settings["base"]
-    terminal_roic = settings["terminal_roic"]
-    margin_base = settings["margin_base"]
-    metrics = settings["metrics"]
     value = {}
     as_of_str = as_of
     if as_of is None: as_of = datetime.now()
@@ -102,6 +97,20 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
     
     data = get_data(symbol, start_year)
     wacc_calc = calc_wacc(data, symbol, freq, n, as_of = as_of_str)
+    terminal_growth_ceiling = wacc_calc["Risk_Free_Rate"]
+    
+    if terminal_growth < terminal_growth_ceiling:
+        tg_source = "Assumption from TERMINAL_GROWTH"
+    else: 
+        terminal_growth = terminal_growth_ceiling
+        tg_source = "Terminal growth ceiling"
+    
+    settings = resolve_assumptions(symbol, base, terminal_roic, margin_base, metrics, terminal_growth)
+    base = settings["base"]
+    terminal_roic = settings["terminal_roic"]
+    margin_base = settings["margin_base"]
+    metrics = settings["metrics"]
+        
     wacc = wacc_calc["WACC"] + wacc_offset
     wacc_low = wacc_calc["WACC_Low"] + wacc_offset
     wacc_high = wacc_calc["WACC_High"] + wacc_offset
@@ -143,7 +152,12 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
             tv_share = PV_tv / (PV_Explicit + PV_tv)
         else: tv_share_source = " and ".join([name for name, pv in [("PV_Explicit", PV_Explicit), ("PV_tv", PV_tv)] if pv <= 0]) + " <= 0"
 
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"]}
+        implicit_roic = fcf[max(fcf)]["Implicit_ROIC"]
+        if implicit_roic is None: roic_consistency = "Unavailable"
+        elif implicit_roic < w[1]: roic_consistency = "Implicit_ROIC < WACC"
+        else: roic_consistency = "Consistent"
+
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "Capital_Turnover": fcf[max(fcf)]["Capital_Turnover"], "Implicit_ROIC": fcf[max(fcf)]["Implicit_ROIC"], "ROIC_Consistency": roic_consistency, "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"], "Terminal_Growth_Source": tg_source}
         
     return value
 
@@ -314,4 +328,4 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
 
 if __name__ == "__main__":
     symbol = "apple"
-    print(monte_carlo(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-19"))
+

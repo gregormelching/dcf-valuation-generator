@@ -2701,6 +2701,223 @@ resolves newest-filing-wins at write time, step 6b). The retroactive price rewri
 `auto_adjust = True` (step 16) — same scope, same deferral. The unguarded base level in
 `project_revenue` (step 17), unreachable while `project_fcf` is its only caller.
 
+#### Step 18 — das Geschäftsjahresfenster, auf das laufende Jahr geöffnet — DONE
+
+Erster Punkt der Phase-5-Prüfung (externer Review, 2026-08-29, Finding 9). Zwei unabhängige
+Jahresfenster schlossen das laufende Kalenderjahr per Konstruktion aus: `parser.py` →
+`get_last_n_years` mit `range(cur_year - n, cur_year)` auf der Schreibseite und `database.py` →
+`get_data` mit `range(start_year, datetime.now().year)` auf der Leseseite. Microsofts FY2026
+(Ende 2026-06-30, eingereicht 2026-07-29, Umsatz 331,839 Mrd) und P&Gs FY2026 (eingereicht
+2026-08-04, 87,032 Mrd) lagen fertig in `storage/*.json` und waren unerreichbar. Beide Grenzen
+sind jetzt inklusiv.
+
+**Was das kostete, solange es drin war.** Das erste projizierte Jahr war bei beiden ein Ist-Jahr,
+und der Stub betrug 1,1362 Jahre statt 0,1369 — also rund ein volles Jahr Aufzinsung auf einen
+Umsatzsockel, der bereits berichtet war. Die Brücke (Debt, Cash, Aktienzahl) stand auf einer 14
+Monate alten Bilanz. `Data_Filed` meldete für Microsoft 2026-07-29, also das FY2026-10-K, obwohl
+nur dessen Vorjahresvergleichszahlen verwendet wurden — der Vintage-Key war aktiv irreführend.
+
+**Der Filter für nicht berichtete Jahre, und warum er dort steht, wo er steht.** Ein inklusives
+Fenster materialisiert 2026 auch für Apple, Tesla und Boeing, deren Geschäftsjahr am 2026-08-19
+noch nicht zu Ende ist. Ohne Filter schreibt `insert_data` dort 13 Zeilen mit `value = NULL`,
+`dcf_value` nimmt `max(data)` als Basisjahr und bricht mit `ValueError: Missing Debt or
+SharesOutstanding value` — gemessen, alle drei. Der Filter sitzt deshalb im Ingest-Block von
+`database.py`, direkt nach `clean_values`, und entfernt Jahre, in denen kein einziger Slot einen
+Wert trägt. Nicht in `get_values`: der läuft zweimal, mit `metrics` und mit `RECON_TAGS`, die
+beiden Aufrufe verlieren unterschiedliche Jahresmengen, und `validation.py` →
+`reconcile_working_capital` indiziert `recon_values[year]` für jedes Jahr aus `values` —
+gemessen `KeyError: 2006`. `rec_values` muss eine Obermenge bleiben.
+
+Das ist kein Verstoß gegen die Konvention, dass Absenz sichtbar bleibt. Ein nicht berichtetes
+Geschäftsjahr ist kein fehlender Wert in einem vorhandenen Jahr; ein `None` dort würde behaupten,
+das Jahr existiere und die Zahl fehle.
+
+**Operativ.** `insert_data` schreibt per `ON CONFLICT DO UPDATE` und löscht nie. Eine
+Fensteränderung erfordert deshalb einen Re-Ingest, und ein Fehlversuch hinterlässt Leerzeilen, die
+ein später nachgerüsteter Filter nicht mehr entfernt — dann `DELETE FROM data WHERE year = 2026`,
+die `flags` hängen per `ON DELETE CASCADE` daran. Der Ingest ist offline und deterministisch:
+ein Kontrolllauf ohne Codeänderung reproduzierte alle fünf Werte bitgleich.
+
+**Werte, `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`, `freq = "1mo"`, Basis-WACC.**
+Apple 132,7992, Tesla 11,6022 und Boeing 44,6770 bleiben unverändert — das ist die Kontrolle
+dafür, dass der Filter nicht zu breit greift.
+
+| | vorher | nachher | |
+|---|---|---|---|
+| microsoft VPS | 288,0109 | 291,6980 | +1,28% |
+| procter_gamble VPS | 138,7314 | 133,7774 | -3,57% |
+| `Stub_Years` beide | 1,1362 | 0,1369 | |
+| Umsatzsockel MSFT / P&G | 281,72 / 84,28 Mrd | 331,839 / 87,032 Mrd | |
+| `Margin_Start_Year`, `COD_Year` | 2025 | 2026 | |
+| `COD_N` | 10 | 11 | |
+
+**Die Vorzeichen sind gegenläufig, und das ist erwartbar.** P&G fällt trotz höherer Umsatzbasis,
+weil der Wegfall eines Aufzinsungsjahres zu 6,86% schwerer wiegt als der um 3,3% höhere Sockel.
+Bei Microsoft überkompensieren ein um 17,8% höherer Sockel und die höhere Marge denselben Verlust
+zu 9,16%. Der WACC bewegt sich bei beiden um weniger als 0,3 Basispunkte — das Beta-Fenster hängt
+an den Preisen, nicht an den Geschäftsjahren, und das ist die Gegenprobe dafür.
+
+**Microsofts FY2026 ist bei `CapEx`, `D&A` und `NWC` als `outlier` geflaggt.** `driver_ratio`
+entfernt den `outlier`-Flag bei `yoy`-Regeln bewusst (Schritt 2a), `CapEx` ist eine `yoy`-Regel,
+das Jahr zählt also mit: `Mean_Last_Three` der CapEx-Intensität springt von 18,11% auf 25,33%.
+Das ist der AI-Capex-Ramp, der ins Modell einwandert, und es ist die richtige Behandlung — ein
+Niveausprung, kein Einmaleffekt. Es ist aber der zweitgrößte Einzeleffekt dieses Schritts und
+erklärt, warum Microsofts `TV_Share` von 0,6128 auf 0,6890 steigt.
+
+**Offen, bewusst vertagt.** `get_data` liest weiter gegen `datetime.now().year`, nicht gegen
+`as_of`. Heute folgenlos, weil beide 2026 sind. Ab 2027-01-01 zieht das Fenster Teslas und Boeings
+FY2026 in einen auf 2026-08-19 gepinnten Lauf — Look-ahead, und die Golden Values gehen ohne
+Codeänderung rot. Dieselbe Fehlerklasse wie der an die Wanduhr gebundene Horizont aus Schritt 2b.
+Der Fix ist ein `as_of`-Parameter auf `get_data` und damit eine Signaturänderung mit sechs
+Aufrufstellen; er gehört gebündelt mit den übrigen Phase-5-Findings.
+
+Zweitens: `MC_GOLDEN` in `tests/test_golden_values.py` steht für Microsoft und P&G noch auf den
+Werten von vor diesem Schritt und ist rot. Entscheidung vom 2026-08-29: die Monte-Carlo-Werte
+werden einmal am Ende aller Phase-5-Fixes neu gepinnt, nicht nach jedem einzelnen. Bis dahin
+läuft die Suite als `pytest -m "not slow"` — 57 passed, 30 deselected. Genau dafür existiert der
+`slow`-Marker.
+
+#### Step 19 — die Reinvestitionsnaht geschlossen — DONE
+
+Finding 1 des externen Reviews. Die zehn expliziten Jahre bauten den FCF von unten auf
+(`nopat + da - capex - dnwc`, aus gemessenen Quoten), die Terminalzeile von oben ab
+(`nopat * terminal_growth / terminal_roic`). Marge und Steuersatz treffen sich an der Naht bereits
+exakt — bei `i == years` ist `m_t` gleich `EBIT_MARGIN` und `t_t` gleich `MARGINAL_TAX_RATE` —,
+die Reinvestition nicht. Gemessener FCF-Sprung: Apple -13,8%, Microsoft +93,6%, P&G -7,3%,
+Tesla -300,1% (Vorzeichenwechsel), Boeing +8,4%. Der implizierte ROIC in Jahr 10 lag bei Apple bei
+1030%, weil die Kapitalbasis über die Projektion auf 36% schrumpfte, während der Umsatz um 51%
+wuchs.
+
+**Gelöst in `model.py` → `project_fcf`:** die Nettoreinvestition ist jetzt eine Mischung aus dem
+Quotenwert `capex + dnwc - da` und dem Steady-State-Wert `nopat * terminal_growth / terminal_roic`,
+gewichtet mit `i / len(projected_years)` — demselben Fadeprofil, das `m_t` und `t_t` benutzen. Bei
+`i == years` ist das Gewicht 1, Jahr 10 rechnet damit schon nach der Terminalregel, und die Naht
+schließt konstruktionsbedingt: gemessener Sprung 1e-16 bei allen fünf. Der `if i == years`-Block
+wurde nicht angefasst, `PV_TV` und `Implied_Multiple` sind unverändert.
+
+**Zwei Alternativen gemessen und verworfen.** Die Terminalzeile der expliziten Phase folgen zu
+lassen (Apple 143,13, Tesla 4,72) schreibt eine gemessene Quote in die Ewigkeit fort: bei Apple
+-1,5%, also dauerhafter Kapitalabbau bei 2,5% ewigem Wachstum, bei Tesla 139,6%, was einen ROIC von
+1,8% gegen einen WACC von 11,26% impliziert. Die explizite Phase ganz an `terminal_roic` zu hängen
+(Apple 117,32, Tesla 18,95) ist konsistent, wirft aber Schritt 4b weg: zehn Jahre Cashflow hingen
+dann allein an einer handgesetzten Zahl in `ASSUMPTIONS`. Die gewählte Variante hält beide früheren
+Entscheidungen — gemessene Quoten dort, wo sie Evidenz sind, Steady-State-Identität dort, wo sie
+gelten muss.
+
+| | vorher | nachher |
+|---|---|---|
+| apple | 132,7992 | 128,1716 |
+| microsoft | 291,6980 | 328,3643 |
+| procter_gamble | 133,7774 | 131,7907 |
+| tesla | 11,6022 | 15,7087 |
+| boeing | 44,6770 | 50,4251 |
+| `PV_Explicit` (Mrd) | 900,63 / 643,16 / 120,65 / -8,96 / 17,62 | 837,33 / 912,18 / 116,08 / 5,44 / 21,92 |
+| `Reinvestment_Rate` Jahr 1 | nicht gefüllt | -0,9% / 43,5% / 6,1% / 120,8% / 65,1% |
+| `Reinvestment_Rate` Jahr 10 | nicht gefüllt | `terminal_growth / terminal_roic` |
+
+**Zwei Tests haben die Änderung korrekt gefangen.** `test_margin_start_zero_operating_income`
+(Schritt 17) lief in eine `ZeroDivisionError`, weil `Reinvestment_Rate` durch `nopat` teilt und der
+Testfall ein Operating Income von 0 fährt; die Quote ist dort jetzt `None`, nicht `0` — `0` wäre
+eine gemessene Quote und behauptet mehr als bekannt ist. Der `Reinvestment`-Betrag bleibt definiert.
+Und `test_tv_share` pinnte Teslas `TV_Share_Source` auf `"PV_Explicit <= 0"`; Teslas `PV_Explicit`
+dreht mit dieser Änderung von -8,96 auf +5,44 Mrd, `TV_Share` ist 0,7473, die Sonderbehandlung im
+Test ist entfallen. Der Guard aus Schritt 5 hört bei Tesla auf zu feuern, weil die Ursache weg ist,
+nicht weil der Guard geändert wurde.
+
+**Was das nicht löst.** `terminal_roic` steht weiter handgesetzt in `ASSUMPTIONS` und trägt jetzt
+zehn Jahre statt eines. Gemessen kostet das wenig — die Spannweite über `terminal_roic ± 5pp` geht
+bei Apple von 3,7% auf 5,5%, bei Boeing von 20,7% auf 24,4% —, weil der Terminalblock ohnehin
+dominierte. Der Konsistenztest zwischen `terminal_roic` und der eigenen Terminalmarge (Finding 7)
+wird durch diesen Schritt überhaupt erst aussagekräftig. Zweitens steuert `TERMINAL_GROWTH` über
+`terminal_growth / terminal_roic` jetzt auch die explizite Phase — die Materialität von Finding 3
+ist damit gestiegen. `MC_GOLDEN` bleibt weiter ungepinnt bis zum Ende der Phase-5-Fixes; Suite läuft
+als `pytest -m "not slow"`, 57 passed.
+
+#### Step 20 — `TERMINAL_GROWTH` begründet und nach oben begrenzt — DONE
+
+Finding 3 des externen Reviews: 15 Treffer für `TERMINAL_GROWTH` in dieser Datei, alle mechanisch,
+keiner leitet die 2,5% her. Bei 51–75% TV-Anteil trägt die Konstante mehr Wert als jede andere
+Einzelzahl, und seit Schritt 19 steuert sie über `terminal_growth / terminal_roic` zusätzlich die
+explizite Phase. Gemessene Spanne über 1,5%–3,5%: Boeing 35,6%, P&G 33,9%, Microsoft 17,5%,
+Apple 15,6%, Tesla 1,3%. Zum Vergleich: der Cost of Debt, für den zwei volle Schritte aufgewendet
+wurden, bewegt 1,6–20,1 Basispunkte WACC.
+
+**Die Begründung, die gefehlt hat.** Ewiges Wachstum ist eine Aussage über die Volkswirtschaft,
+nicht über die Firma: auf unendlicher Sicht wächst kein Unternehmen schneller als die Wirtschaft,
+in der es sitzt, sonst wird es irgendwann größer als sie. 2,5% = Inflationsziel 2% plus ein halber
+Punkt real. Die Obergrenze ist der risikofreie Zins, weil der 10-Jahres-Nominalzins die beste im
+Modell verfügbare Näherung für langfristiges nominales Wachstum ist — und er ist bereits datiert,
+gecacht und an `as_of` gebunden.
+
+**Firmenspezifisches `g` wurde geprüft und verworfen.** Die Differenzierung zwischen den Firmen
+steht längst in der expliziten Phase — `base`, Margen-Fade, `terminal_roic`. Ein zweites Mal in der
+Perpetuität zu differenzieren ist der Hebel, über den sich Optimismus unauffällig einschleusen
+lässt; P&Gs 33,9% Spanne zeigt, wie viel daran hängt. Nicht erneut aufmachen.
+
+**Umgesetzt in `valuation.py` → `dcf_value`.** Der Deckel steht direkt nach `calc_wacc`, weil
+`wacc_calc["Risk_Free_Rate"]` erst dort bekannt ist. `resolve_assumptions` musste dafür unter
+`calc_wacc` wandern: dessen `terminal_roic <= terminal_growth`-Prüfung muss gegen den effektiven
+Wert laufen, nicht gegen den übergebenen. Das war gefahrlos, weil `settings` erst in der
+WACC-Schleife gebraucht wird. `Terminal_Growth` meldet jetzt den effektiven Wert, `Terminal_Growth_Source`
+unterscheidet `Assumption from TERMINAL_GROWTH` von `Terminal growth ceiling` — ohne diesen zweiten
+Schlüssel liest sich ein gedeckelter Wert im Output wie eine gewählte Annahme, und genau diese
+Unterscheidung ist der Zweck des Schritts.
+
+**Kein Wert bewegt sich.** 2,5% liegt weit unter den 4,65% des Stichtags; alle fünf `Value_Per_Share`
+sind bitgleich. Der Deckel ist heute unerreichter Code — dieselbe Lage wie der `Unavailable`-Pfad aus
+Schritt 14 und aus demselben Grund akzeptabel: `test_terminal_growth` pinnt ihn an der Funktion
+selbst, mit `terminal_growth = 0.05` gegen den rf von 4,65% am `as_of`, und prüft beide Zustände des
+Source-Schlüssels. Ein Test nur auf den gedeckelten Wert wäre auch grün geblieben, wenn der
+Source-Schlüssel wieder verschwindet. Suite 57 → 58.
+
+#### Step 21 — der Terminal-ROIC-Konsistenztest als Diagnose — DONE
+
+Finding 7 des externen Reviews, durch Schritt 19 überhaupt erst aussagekräftig: erst seit die
+Nettoreinvestition pro Jahr definiert ist, lässt sich die Kapitalbasis im Terminaljahr aus dem
+Modell selbst ableiten. `IC` im Terminaljahr = `roic(data)["IC_Last"]` plus die über die zehn
+expliziten Jahre kumulierte Nettoreinvestition; der implizierte ROIC ist der Terminal-NOPAT gegen
+diese Basis. Damit stehen zwei unabhängige Aussagen über dieselbe Größe nebeneinander — die
+handgesetzte in `ASSUMPTIONS` und die aus Marge, Umsatz und Reinvestition folgende.
+
+| | `terminal_roic` gesetzt | impliziert | Umschlag nötig | Umschlag 2025 | WACC |
+|---|---|---|---|---|---|
+| apple | 20,0% | 121,5% | 5,21x | 10,41x | 9,03% |
+| microsoft | 20,0% | 26,9% | 0,78x | 0,90x | 9,16% |
+| procter_gamble | 20,0% | 20,8% | 1,21x | 1,11x | 6,86% |
+| tesla | 12,0% | **6,4%** | 1,87x | 2,02x | 11,26% |
+| boeing | 15,0% | 11,9% | 3,32x | 2,40x | 8,04% |
+
+**Tesla ist der Befund.** Der implizierte ROIC von 6,4% liegt unter dem WACC von 11,26%: das Modell
+lässt die Firma im Terminaljahr Kapital zu einer Rendite unter ihren Kapitalkosten einsetzen und
+rechnet ewiges Wachstum trotzdem als wertneutral bis positiv ein. Das ist kein konservativer Ansatz,
+sondern ein innerer Widerspruch. Boeing zeigt dieselbe Richtung milder — gesetzte 15% gegen
+implizierte 11,9%, bei einem nötigen Kapitalumschlag von 3,32x gegen tatsächliche 2,40x. Microsoft
+und P&G bestehen den Test; ihre Annahme ist konservativ und der nötige Umschlag liegt beim
+historischen. Apples 121,5% ist ein Artefakt der negativen gemessenen Reinvestition, kein Befund —
+gepinnt wird es trotzdem, weil es sich bewegt, sobald jemand die Driver-Fenster anfasst.
+
+**Diagnose statt Kopplung, bewusst entschieden.** `terminal_roic` automatisch aus der eigenen
+Projektion abzuleiten würde die Zahl zirkulär machen — das Modell bestätigte sich selbst. Die beiden
+Größen stehen deshalb als `Implicit_ROIC` und `Capital_Turnover` auf der TV-Zeile in
+`model.py` → `project_fcf` und werden von `valuation.py` → `dcf_value` in die Ausgabe gehoben. Der
+Umschlag ist die Hälfte, die man gegen eine externe Zahl halten kann; der ROIC allein ist schwer
+einzuordnen.
+
+**Das Flag sitzt in `dcf_value`, nicht in `project_fcf`,** weil der WACC dort nicht bekannt und pro
+Zeile verschieden ist. `ROIC_Consistency` kennt drei Zustände — `Consistent`,
+`Implicit_ROIC < WACC` und `Unavailable`, letzteres wenn `IC_Last` fehlt und die Diagnoseschlüssel
+`None` bleiben. Kein `raise`: Tesla ist ein Ergebnis, das man sehen will, kein Abbruchgrund —
+dieselbe Logik wie bei `TV_Share_Source`.
+
+**Ein Off-by-one beim Bauen gefunden und behoben.** `implicit_roic` und `cap_turnover` standen
+zuerst vor der Neuzuweisung von `cur_rev`, `ebit` und `nopat` auf die Terminalwerte, maßen also den
+Gewinn von Jahr 10 gegen die Kapitalbasis des Terminaljahrs — Apple 118,5% statt 121,5%. Die
+gepinnten Werte haben das gefangen. Die Kapitalbasis selbst summiert bewusst nur die zehn expliziten
+Jahre: die Reinvestition der TV-Zeile passiert *im* Terminaljahr und kann dessen Gewinn nicht
+erwirtschaftet haben.
+
+Keine Wertänderung, der Schritt rechnet nur mit. Suite 58 → 68.
+
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
 - Show assumptions and data sources transparently in the output

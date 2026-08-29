@@ -210,7 +210,7 @@ def save_data(c: str) -> None:
             
 def get_last_n_years(n: int) -> list:
     cur_year = datetime.now().year
-    last_n_years = [year for year in range(cur_year - n, cur_year)]
+    last_n_years = [year for year in range(cur_year - n, cur_year + 1)]
     return last_n_years   
     
 def get_values(n: int, company: str, metric_tags: dict) -> dict:
