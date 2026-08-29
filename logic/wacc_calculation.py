@@ -223,4 +223,4 @@ if __name__ == "__main__":
     data = get_data("apple", 2016) 
     beta = adjusted_beta(data, "apple", "1mo", N_MONTHS, as_of = as_of)
     rf = risk_free_rate(as_of)
-    print(debt_to_equity(data, "apple", None, as_of = as_of))
+    print(calc_wacc(data, "apple", "1mo", N_MONTHS, as_of = as_of))

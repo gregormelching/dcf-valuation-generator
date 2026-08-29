@@ -1759,7 +1759,15 @@ and makes changes to `logic/` visible in a way that turns cheap edits expensive:
    price reads, both dates are reported, and the bound is pinned by a test. The measured finding was
    not the stale price but the two prices: the weights stand on a 19-day-old close, the reference
    price on a 5-day-old one.
-4. **The fade start is unfiltered, the fade target is not** (step 4c).
+4. **CLOSED (step 17) — the fade start is unfiltered** (step 4c). Filtering it was measured and
+   rejected: Boeing's last clean `OperatingIncome` year is 2023 at -0.99%, and because its
+   `margin_base` is `Last` the filtered start drags the target with it, taking value per share
+   44.68 → -84.60. The start is now reported instead — `EBIT_Margin_Start`, `Margin_Start_Year` and
+   `Margin_Start_Source`, the last of which reads `Last_Actual_Flagged` for Boeing alone.
+
+**The list is empty as of 2026-08-28.** All four are resolved in code and pinned by tests, none by
+deferral. Phase 4 is unblocked by this list; what remains open before it is named in the block
+directly above Phase 4.
 
 - **CLOSED — the Damodaran cross-check** (step 8). WACC within 70bp of the sector cost of capital
   for four of five companies, ERP within 18bp of the same source at a different date, and three
@@ -1823,7 +1831,9 @@ and makes changes to `logic/` visible in a way that turns cheap edits expensive:
   went Apple 132.93 to 136.75, Microsoft 286.77 to 298.08, Tesla 11.58 to 11.74, P&G 142.98 to
   143.67 and **Boeing 48.01 to -29.90**, a sign flip. Apple's `dNWC` now runs -2.17 / -2.15 / -2.12
   / -2.06 / -1.99bn and all five values reproduce the step 5 table.
-- **The fade start is unfiltered, the fade target is not** (step 4c, still open).
+- **CLOSED (step 17) — the fade start is unfiltered** (step 4c). Reported, not filtered; the
+  filtered variant costs Boeing 129 per share in the wrong direction. `Last` as a `margin_base`
+  leaves both ends of the fade unfiltered, which is now visible in the output.
 - **Boeing's NWC intensity is not stationary** (step 4d; step 4e could not fix it with a window
   choice, so it becomes a Phase 3 sensitivity axis).
 
@@ -2515,6 +2525,181 @@ through the beta `freq` instead of `MARKET_PRICE_FREQ` moves P&G's market price 
 cents, and its `P_Above_Market` 39.9% → 40.1%. One assertion in the pinned Monte Carlo suite caught
 it; the other four companies are unaffected because only P&G's distribution straddles the price at
 all. Without step 13's pinning this would have been a silent change to a headline number.
+
+#### Step 17 — the fade start, reported instead of filtered — DONE
+
+Item 4 of the four carried out of Phase 2, and the last one. `m_t` runs from `LAST_EBIT_MARGIN` to
+`EBIT_MARGIN` over the horizon; step 4c decided the target per company and left the start as it was
+found — `data[last_year]["OperatingIncome"]["Value"]` divided by revenue, with no flag check, no
+absence check and no reporting key. Phase 4 will print the fade, so one half of the printed line
+would have stood on an unexamined number.
+
+**Filtering the start was measured and rejected.** Boeing is the only one of the five whose last
+actual `OperatingIncome` carries a flag — `outlier` under the `margin_change_pp` rule, and not only
+in 2025 but in 2019, 2020, 2021 and 2024 as well. Its last clean year is 2023 at an EBIT margin of
+-0.9936%. Boeing's `margin_base` is `Last`, which resolves to `LAST_EBIT_MARGIN` rather than to a key
+in `driver_ratio`, so a flag-checked start pulls the target down with it: start and target both go to
+-0.99%, and value per share goes **44.68 → -84.60** with `TV_Share` collapsing to `None`
+(`PV_Explicit <= 0`). That is not a conservative correction, it is an unnamed extreme assumption
+wearing the label "no change". Measured at `as_of = 2026-08-19`, base WACC, by substituting the last
+clean margin into the 2025 row.
+
+**Decided: report the start, do not filter it.** The start means "where the company is", and that is
+the one statement in the model that must not be quietly replaced by a statistic. What was missing was
+not a filter but visibility — the same rule as everywhere else in this project: absence and doubt are
+reported, never substituted. `project_fcf` now derives `MARGIN_START_SOURCE` from the flag list of the
+last actual year, `Last_Actual` against `Last_Actual_Flagged`, keeps the value either way, and writes
+`Margin_Start`, `Margin_Start_Year` and `Margin_Start_Source` into both the projected rows and the TV
+row. `dcf_value` lifts them into every valuation row as `EBIT_Margin_Start`, `Margin_Start_Year` and
+`Margin_Start_Source`, next to the existing `EBIT_Margin_Target`.
+
+Measured at `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`:
+
+| | `EBIT_Margin_Start` | `Margin_Start_Source` | `EBIT_Margin_Target` | `Margin_Base` |
+|---|---|---|---|---|
+| apple | 31.97% | `Last_Actual` | 31.10% | `Mean_Last_Three` |
+| microsoft | 45.62% | `Last_Actual` | 44.01% | `Mean_Last_Three` |
+| procter_gamble | 24.26% | `Last_Actual` | 22.81% | `Mean_Last_Three` |
+| tesla | 4.59% | `Last_Actual` | 4.59% | `Last` |
+| boeing | 4.79% | **`Last_Actual_Flagged`** | 4.79% | `Last` |
+
+No value moves: the step is reporting plus a guard, and all pinned numbers from step 16 reproduce
+exactly.
+
+**The step 4c sentence was too kind to itself.** "The fade start is unfiltered, the fade target is
+not" holds only for the three companies on `Mean_Last_Three`. For Boeing and Tesla, `margin_base` is
+`Last`, and `Last` resolves to `LAST_EBIT_MARGIN` — `driver_ratio` is never called, so **both ends of
+the fade are unfiltered** and the fade is a constant. That is the intended behaviour from step 4c, but
+it was not written down as such, and nothing in the output revealed it. The two new keys make it
+readable: where start equals target, there is no fade, and where the source reads
+`Last_Actual_Flagged`, the whole thing stands on a year the validation layer objected to.
+
+**The absence guard, and why it is split in two.** `LAST_EBIT_MARGIN` divided without checking, so a
+missing `OperatingIncome` died with `TypeError` and a zero revenue with `ZeroDivisionError` — both
+before the `None` check for EBIT, D&A, CapEx and NWC further down, which was built for exactly this
+class of problem. `project_fcf` now raises two separate `ValueError`s naming the metric and the year:
+`OperatingIncome` against `None` only, `Revenue` against `None` and `0`. The asymmetry is deliberate
+and is the same convention as `dNWC`: an operating income of exactly zero is a measured margin of
+zero, not missing data, and collapsing both metrics into one `in (0, None)` check would turn a
+legitimate reading into a data error. Verified: with the 2025 `OperatingIncome` set to `0.0` the
+projection runs and reports `Margin_Start` `0.0` under `Last_Actual`.
+
+**Pinned by four tests, three of them new.** `test_margin_start` asserts `EBIT_Margin_Start`,
+`Margin_Start_Source` and `Margin_Start_Year` for all five companies across all three WACC legs — the
+start does not depend on the WACC, which is the point of asserting it three times. The two guard tests
+call `project_fcf` directly on a `deepcopy` of the cached data with the last year's value knocked out,
+and use `pytest.raises(..., match = ...)` on the metric name rather than a bare `ValueError`:
+`project_fcf` has six `ValueError` paths, and a bare catch would stay green if the new guard vanished
+and an older check caught the same input further down. The third new test is the positive case for a
+zero operating income. Mutation check as in step 16: with both guard lines removed from a scratch copy
+of `model.py`, the two inputs raise `TypeError` and `ZeroDivisionError` instead — the tests bite. Suite
+78 → 81, all green.
+
+**Checked and deliberately not done.** `project_revenue` reads the same unguarded base level,
+`data[sorted(data)[-1]]["Revenue"]["Value"]`, and would die the same way. Its only caller is
+`project_fcf`, one line below the new guard, and both read the identical value — a second guard there
+is unreachable code today. It becomes relevant the moment a Phase 4 module calls `project_revenue`
+on its own for a revenue view; noted here so the next review does not rediscover it as a hole.
+
+#### Before Phase 4 — what is actually left
+
+Written 2026-08-28 after step 17 emptied the Phase 2 carry-forward list, closed 2026-08-29. Nothing
+here was structural in the sense of step 6b — no signature and no dict key changed. Item 1 was the
+only blocker: a dashboard freezes the output format and makes an unpinned key expensive to discover.
+Item 2 is a decision, recorded so it is not re-litigated. Item 3 was cosmetic, inherited from step 16.
+All three are closed; the suite went 81 → 87. **Phase 4 is unblocked.**
+
+**1. CLOSED 2026-08-29 — `COD_Basis` and `COD_Evidence` are pinned.** Step 15 fixed a guard that had
+been dead since step 14: it tested `OUTLIER_RULES["OperatingIncome"][0] == "yoy"` while the rule is
+`margin_change_pp`, and nothing noticed for two steps. The same shape survives in code —
+`synthetic_cost_of_debt` and `cost_of_debt` gate their outlier-stripping on the literal rule name, so
+renaming a rule in `validation.py`, or retuning `margin_change_pp` past the threshold that fires on
+Boeing's recovery, silently changes which year the coverage ratio is read from. Boeing's cost of debt
+hangs on that selection: 2023 gave -0.31x and D2/D, 2025 gives +1.54x and B2/B, 3.74 per share apart.
+`WACC` alone never catches it, because the IG floor keeps binding while the evidence underneath moves.
+
+`GOLDEN` now carries `COD_Basis`, `COD_Rating`, `COD_Year` and `COD_N` per company, asserted by
+`test_cod_evidence` across all three WACC legs — the cost of debt does not depend on the WACC offset,
+which is what asserting it three times states:
+
+| | `COD_Basis` | `COD_Rating` | `COD_Year` | `COD_N` |
+|---|---|---|---|---|
+| apple | `Synthetic` | `Aaa/AAA` | **2023** | 8 |
+| microsoft | `Synthetic` | `Aaa/AAA` | 2025 | 10 |
+| procter_gamble | `Synthetic` | `Aaa/AAA` | 2025 | 10 |
+| tesla | `Synthetic` | `Aaa/AAA` | 2025 | 10 |
+| boeing | `IG_Floor+Below_Investment_Grade` | `B2/B` | 2025 | 10 |
+
+**Apple is the finding this pin surfaced.** Its coverage stands on 2023, not 2025, because
+`InterestExpense` is `missing` in both 2024 and 2025 — the parser finds no tag. Apple's rating
+evidence is therefore two years stale, `n = 8` against 10 for the others, and nothing in the output
+said so: `COD_Basis` reads `Synthetic`, the WACC is unremarkable, and the year sat only inside the
+`COD_Evidence` dict. It is now a pinned number, so it cannot drift further without a red test.
+
+`Coverage` and `Realised` are deliberately not pinned. The failure mode is the year selection, which
+shows up discretely in `Year` and in the `Rating` derived from it; the two floats would need
+`pytest.approx` and would additionally go red on any re-ingest with restated figures — a test that
+fails without a logic change is a test nobody believes the next time it fails.
+
+The `Unavailable` branch from item 2 is pinned separately by `test_cod_unavailable`, which nulls
+`InterestExpense` in every year of a `deepcopy` and asserts `Source == "Unavailable"` with
+`Cost_of_Debt`, `Coverage` and `Year` all `None` and `n == 0`. It calls `synthetic_cost_of_debt`
+directly with a literal `RF_STUB` rather than `risk_free_rate`, because the branch returns before the
+rate is read and a real call would make the test depend on the FRED cache and `RF_MAX_AGE_DAYS` for a
+value it never uses.
+
+**2. Decided 2026-08-28 — `Unavailable` keeps the investment-grade floor, and the reason is written
+here so it is not re-litigated.** In `calc_wacc`, when the synthetic rate is not usable the code
+falls back to the realised rate against `rf + spread(Baa2/BBB)` — at `as_of = 2026-08-19` that is
+4.65% + 1.11% = 5.76% — and it does so identically whether `synthetic_cost_of_debt` returned
+`Below_Investment_Grade` (coverage measured, below `INVESTMENT_GRADE = 2.5`) or `Unavailable`
+(no flag-clean year with a usable interest expense, coverage `None`). Step 14 kept the two states
+distinct and the shared treatment was never argued.
+
+It is argued now, and the floor stays for both. The floor's justification never depended on the
+coverage measurement: it exists because a realised rate computed from legacy coupons is a statement
+about debt issued years ago, not about what the company would pay today, and that stays true when
+coverage cannot be computed at all. The floor is also directionally safe — it can only raise the
+cost of debt and lower the value, never the reverse — so applying it under ignorance is conservative,
+not optimistic. The competing reading, that `rf + BBB` is a *rating assumption* and therefore a
+plausible default substituted for missing data, is the one the project convention forbids; it fails
+because the floor is not a claim that the company is investment grade. It is a lower bound on what
+any corporate borrower pays, applied to a realised rate that is known to be backward-looking. The
+label carries the difference: `IG_Floor+Below_Investment_Grade` means the company was measured as
+junk and the floor still bound; `IG_Floor+Unavailable` means nothing could be measured and the bound
+was used in place of a rating.
+
+Two consequences to keep on record. The `Unavailable` path is unreached by all five companies today
+— Boeing is the only floor case and it is `Below_Investment_Grade` — so the decision is untestable
+end to end and must be pinned at the level of `synthetic_cost_of_debt` on constructed data instead.
+And `COD_Alternative` is `None` on the `Unavailable` path where it holds the rejected synthetic rate
+everywhere else; a reader of the output has to know that `None` there means "no synthetic rate
+existed", not "the synthetic rate was zero".
+
+**3. CLOSED 2026-08-29 — `price_reference` now names both failure modes.** Step 16 split absence from
+staleness into two `raise` statements, but the absence branch re-raised inside `except ValueError`
+without `from None`, so every traceback carried a "During handling of the above exception, another
+exception occurred" chain — a sentence that means a bug in the handler, where in fact an expected
+state was being translated deliberately. The message said "Failed to retrieve price data", which
+reads as a technical failure rather than the actual state: no row at or before `as_of`. The staleness
+message named neither the date found, nor the age, nor the bound it was measured against.
+
+Both are rewritten. The absence branch drops the unused `as e`, raises `from None` — the underlying
+`Too few prices` message carries nothing the new one does not — and says `No price data for {symbol}
+on or before {as_of}`, where "on or before" makes the `date <= as_of` semantics of `get_prices`
+readable: a reader knows immediately that re-fetching will not help for a date before the cache
+begins. The staleness branch now reports the date, the bound and the age, per the convention that a
+ratio is only quoted together with its window.
+
+`test_price_bound` and `test_price_reference_absence` gained `match = "is older than"` and
+`match = "No price data"`. The fragments carry no date and no number on purpose: a pattern containing
+the age or the newest close would go red at the next price refresh with no code change behind it,
+which is the same trap avoided by leaving `Realised` out of the COD pin above.
+
+**Deferred by decision, not to be reopened as findings.** Point-in-time filings (`parser.py`
+resolves newest-filing-wins at write time, step 6b). The retroactive price rewrite from
+`auto_adjust = True` (step 16) — same scope, same deferral. The unguarded base level in
+`project_revenue` (step 17), unreachable while `project_fcf` is its only caller.
 
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report

@@ -31,12 +31,12 @@ PRICE_MAX_AGE_DAYS = {
 def price_reference(symbol: str, freq: str, as_of: str) -> dict: 
     try:
         row = get_prices(symbol, freq, 1, as_of)
-    except ValueError as e:
-        raise ValueError(f"Failed to retrieve price data for {symbol} as of {as_of}")
+    except ValueError:
+        raise ValueError(f"No price data for {symbol} on or before {as_of}") from None
 
     age = (datetime.strptime(as_of, "%Y-%m-%d") - datetime.strptime(row[0][0], "%Y-%m-%d")).days
     if age > PRICE_MAX_AGE_DAYS[freq]:
-        raise ValueError(f"Price data for {symbol} is too old. Please update the data.")
+        raise ValueError(f"Price data for {symbol} from {row[0][0]} is older than {PRICE_MAX_AGE_DAYS[freq]} (age: {age}). Please update the data.")
     
     return {"Price": row[0][1], "Date": row[0][0], "Age": age, "Source": freq, "As_Of": as_of}
 

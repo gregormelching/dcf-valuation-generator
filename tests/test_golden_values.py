@@ -1,10 +1,13 @@
 import pytest 
+import copy
 from datetime import datetime, timedelta
 from valuation import dcf_value, monte_carlo
 from prices import price_reference, PRICE_MAX_AGE_DAYS
-from database import get_prices
-from wacc_calculation import N_MONTHS
+from database import get_prices, get_data
+from wacc_calculation import N_MONTHS, synthetic_cost_of_debt
+from model import project_fcf
 
+RF_STUB = {"Risk_Free_Rate": 0.0465}
 AS_OF = "2026-08-19"
 START_YEAR = 2016
 YEARS = 10
@@ -14,6 +17,8 @@ DRAWS = 2000
 SEED = 12345
 BOUND_SYMBOL = "apple"
 FUTURE = "2999-12-31"
+GUARD_SYMBOL = "apple"
+GUARD_ROIC = 0.3
 
 MC_GOLDEN = {
     "apple": {
@@ -63,7 +68,14 @@ GOLDEN = {
         "Implied_Multiple": 9.41545108964314,
         "TV_Share": 0.49552357194015606,
         "Data_Filed": "2025-10-31",
-        "RF_Date": "2026-08-19"
+        "RF_Date": "2026-08-19",
+        "EBIT_Margin_Start": 0.31970799762591884,
+        "Margin_Start_Source": "Last_Actual",
+        "Margin_Start_Year": 2025,
+        "COD_Basis": "Synthetic",
+        "COD_Rating": "Aaa/AAA",
+        "COD_Year": 2023,
+        "COD_N": 8
     },
     "microsoft": {
         "Value_Per_Share": 288.0109140958672,
@@ -74,7 +86,14 @@ GOLDEN = {
         "Implied_Multiple": 8.837582530587735,
         "TV_Share": 0.6127923483953206,
         "Data_Filed": "2026-07-29",
-        "RF_Date": "2026-08-19"
+        "RF_Date": "2026-08-19",
+        "EBIT_Margin_Start": 0.4562195624085985,
+        "Margin_Start_Source": "Last_Actual",
+        "Margin_Start_Year": 2025,
+        "COD_Basis": "Synthetic",
+        "COD_Rating": "Aaa/AAA",
+        "COD_Year": 2025,
+        "COD_N": 10
     },
     "procter_gamble": {
         "Value_Per_Share": 138.7314197912333,
@@ -85,7 +104,14 @@ GOLDEN = {
         "Implied_Multiple": 13.437660512335537,
         "TV_Share": 0.6224540605026633,
         "Data_Filed": "2026-08-04",
-        "RF_Date": "2026-08-19"
+        "RF_Date": "2026-08-19",
+        "EBIT_Margin_Start": 0.24264391818138675,
+        "Margin_Start_Source": "Last_Actual",
+        "Margin_Start_Year": 2025,
+        "COD_Basis": "Synthetic",
+        "COD_Rating": "Aaa/AAA",
+        "COD_Year": 2025,
+        "COD_N": 10
     },
     "tesla": {
         "Value_Per_Share": 11.602225457231938,
@@ -96,7 +122,14 @@ GOLDEN = {
         "Implied_Multiple": 3.2999558475896067,
         "TV_Share": None,
         "Data_Filed": "2026-01-29",
-        "RF_Date": "2026-08-19"
+        "RF_Date": "2026-08-19",
+        "EBIT_Margin_Start": 0.04592573845001951,
+        "Margin_Start_Source": "Last_Actual",
+        "Margin_Start_Year": 2025,
+        "COD_Basis": "Synthetic",
+        "COD_Rating": "Aaa/AAA",
+        "COD_Year": 2025,
+        "COD_N": 10
     },
     "boeing": {
         "Value_Per_Share": 44.677033352728394,
@@ -107,7 +140,14 @@ GOLDEN = {
         "Implied_Multiple": 7.51868895491711,
         "TV_Share": 0.7236520181526642,
         "Data_Filed": "2026-01-30",
-        "RF_Date": "2026-08-19"
+        "RF_Date": "2026-08-19",
+        "EBIT_Margin_Start": 0.0478521847020556,
+        "Margin_Start_Source": "Last_Actual_Flagged",
+        "Margin_Start_Year": 2025,
+        "COD_Basis": "IG_Floor+Below_Investment_Grade",
+        "COD_Rating": "B2/B",
+        "COD_Year": 2025,
+        "COD_N": 10
     },
 }
 
@@ -200,12 +240,85 @@ def test_price_bound(freq):
     stale = datetime.strftime(newest + timedelta(days = bound + 1), "%Y-%m-%d")
 
     assert price_reference(BOUND_SYMBOL, freq, edge)["Age"] == bound
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match = "is older than"):
         price_reference(BOUND_SYMBOL, freq, stale)
 
 def test_price_reference_absence():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match = "No price data"):
         price_reference(BOUND_SYMBOL, "1mo", "2000-01-01")
+
+def test_margin_start(result):
+    sym = result[0]
+    val = result[1]
+    
+    assert val["wacc_low"]["EBIT_Margin_Start"] == GOLDEN[sym]["EBIT_Margin_Start"]
+    assert val["wacc"]["EBIT_Margin_Start"] == GOLDEN[sym]["EBIT_Margin_Start"]
+    assert val["wacc_high"]["EBIT_Margin_Start"] == GOLDEN[sym]["EBIT_Margin_Start"]
+    
+    assert val["wacc_low"]["Margin_Start_Source"] == GOLDEN[sym]["Margin_Start_Source"]
+    assert val["wacc"]["Margin_Start_Source"] == GOLDEN[sym]["Margin_Start_Source"]
+    assert val["wacc_high"]["Margin_Start_Source"] == GOLDEN[sym]["Margin_Start_Source"]
+    
+    assert val["wacc_low"]["Margin_Start_Year"] == GOLDEN[sym]["Margin_Start_Year"]
+    assert val["wacc"]["Margin_Start_Year"] == GOLDEN[sym]["Margin_Start_Year"]
+    assert val["wacc_high"]["Margin_Start_Year"] == GOLDEN[sym]["Margin_Start_Year"]
+
+def test_margin_start_missing_operating_income():
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data[max(data)]["OperatingIncome"]["Value"] = None
+
+    with pytest.raises(ValueError, match = "Operating Income"):
+        project_fcf(data, YEARS, GUARD_ROIC)
+
+def test_margin_start_zero_revenue():
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data[max(data)]["Revenue"]["Value"] = 0
+
+    with pytest.raises(ValueError, match = "Revenue"):
+        project_fcf(data, YEARS, GUARD_ROIC)
+
+def test_margin_start_zero_operating_income():
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data[max(data)]["OperatingIncome"]["Value"] = 0.0
+    fcf = project_fcf(data, YEARS, GUARD_ROIC, margin_base = "Last")
+
+    assert fcf[min(fcf)]["Margin_Start"] == 0.0
+    assert fcf[min(fcf)]["Margin_Start_Source"] == "Last_Actual"
+    assert fcf[min(fcf)]["Margin_Start_Year"] == max(data)
+
+def test_cod_evidence(result):
+    sym = result[0]
+    val = result[1]
+
+    assert val["wacc_low"]["COD_Basis"] == GOLDEN[sym]["COD_Basis"]
+    assert val["wacc"]["COD_Basis"] == GOLDEN[sym]["COD_Basis"]
+    assert val["wacc_high"]["COD_Basis"] == GOLDEN[sym]["COD_Basis"]
+    
+    assert val["wacc_low"]["COD_Evidence"]["Rating"] == GOLDEN[sym]["COD_Rating"]
+    assert val["wacc"]["COD_Evidence"]["Rating"] == GOLDEN[sym]["COD_Rating"]
+    assert val["wacc_high"]["COD_Evidence"]["Rating"] == GOLDEN[sym]["COD_Rating"]
+    
+    assert val["wacc_low"]["COD_Evidence"]["Year"] == GOLDEN[sym]["COD_Year"]
+    assert val["wacc"]["COD_Evidence"]["Year"] == GOLDEN[sym]["COD_Year"]
+    assert val["wacc_high"]["COD_Evidence"]["Year"] == GOLDEN[sym]["COD_Year"]
+    
+    assert val["wacc_low"]["COD_Evidence"]["n"] == GOLDEN[sym]["COD_N"]
+    assert val["wacc"]["COD_Evidence"]["n"] == GOLDEN[sym]["COD_N"]
+    assert val["wacc_high"]["COD_Evidence"]["n"] == GOLDEN[sym]["COD_N"]
+
+def test_cod_unavailable():
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    
+    for year in data:
+        data[year]["InterestExpense"]["Value"] = None
+    
+    coverage = synthetic_cost_of_debt(data, RF_STUB)
+    
+    assert coverage["Source"] == "Unavailable"
+    assert coverage["Coverage"] is None
+    assert coverage["Year"] is None
+    assert coverage["Cost_of_Debt"] is None
+    assert coverage["n"] == 0
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
