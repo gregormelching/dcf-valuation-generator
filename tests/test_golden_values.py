@@ -18,6 +18,7 @@ SEED = 12345
 BOUND_SYMBOL = "apple"
 FUTURE = "2999-12-31"
 GUARD_SYMBOL = "apple"
+CUT_M = "2026-06-30"
 GUARD_ROIC = 0.3
 
 MC_GOLDEN = {
@@ -364,6 +365,20 @@ def test_cod_unavailable():
     assert coverage["Year"] is None
     assert coverage["Cost_of_Debt"] is None
     assert coverage["n"] == 0
+
+def test_data_vintage():
+    cut_data = get_data("microsoft", START_YEAR, CUT_M)
+    as_of_data = get_data("microsoft", START_YEAR, AS_OF)
+
+    assert max(cut_data) == 2025
+    assert max(as_of_data) == 2026
+    assert cut_data[2025]["Revenue"]["Value"] is not None
+    
+def test_vintage_keeps_missing():
+    data = get_data(GUARD_SYMBOL, START_YEAR, AS_OF)
+    
+    assert "InterestExpense" in data[2025].keys()
+    assert data[2025]["InterestExpense"]["Value"] is None
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
