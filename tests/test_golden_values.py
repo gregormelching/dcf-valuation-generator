@@ -309,21 +309,21 @@ def test_margin_start(result):
     assert val["wacc_high"]["Margin_Start_Year"] == GOLDEN[sym]["Margin_Start_Year"]
 
 def test_margin_start_missing_operating_income():
-    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR, AS_OF))
     data[max(data)]["OperatingIncome"]["Value"] = None
 
     with pytest.raises(ValueError, match = "Operating Income"):
         project_fcf(data, YEARS, GUARD_ROIC)
 
 def test_margin_start_zero_revenue():
-    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR, AS_OF))
     data[max(data)]["Revenue"]["Value"] = 0
 
     with pytest.raises(ValueError, match = "Revenue"):
         project_fcf(data, YEARS, GUARD_ROIC)
 
 def test_margin_start_zero_operating_income():
-    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR, AS_OF))
     data[max(data)]["OperatingIncome"]["Value"] = 0.0
     fcf = project_fcf(data, YEARS, GUARD_ROIC, margin_base = "Last")
 
@@ -352,7 +352,7 @@ def test_cod_evidence(result):
     assert val["wacc_high"]["COD_Evidence"]["n"] == GOLDEN[sym]["COD_N"]
 
 def test_cod_unavailable():
-    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR))
+    data = copy.deepcopy(get_data(GUARD_SYMBOL, START_YEAR, AS_OF))
     
     for year in data:
         data[year]["InterestExpense"]["Value"] = None

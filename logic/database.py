@@ -93,18 +93,21 @@ def insert_data(company: str, values: dict, flags: dict) -> None:
                     cursor.execute("INSERT INTO flags (data_id, flag) VALUES (?, ?)", (data_id, f))
         conn.commit()
 
-def get_data(company: str, start_year: int) -> dict:
-    years = range(start_year, datetime.now().year + 1)
+def get_data(company: str, start_year: int, as_of: str | None = None) -> dict:
     values = {}
+    as_of = as_of if as_of is not None else datetime.now().strftime("%Y-%m-%d")
     query = "SELECT year, metric_name, value, tag, form, end_date, filed, flag FROM data LEFT JOIN flags ON data.id = flags.data_id WHERE company = ?"
     with sqlite3.connect(database) as conn:
         cursor = conn.cursor()
         cursor.execute(query, (company,))
         for row in cursor.fetchall():
-            if row[0] in years:
+            if row[0] >= start_year:
                 values.setdefault(row[0], {}).setdefault(row[1], {"Value": row[2], "Tag": row[3], "Form": row[4], "End": row[5], "Filed": row[6], "Flag": []})
                 if not row[7] == None:
                     values[row[0]][row[1]]["Flag"].append(row[7])
+                    
+        values = {year: m for year, m in values.items() if min([v["Filed"] for v in m.values() if v["Filed"] is not None], default = as_of) <= as_of}
+        
         return values
 
 def insert_prices(symbol: str, freq: str, rows: list, adjusted: int) -> None: 

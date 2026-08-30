@@ -91,11 +91,11 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, te
 
 def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0, nwc_intensity: float | None = None, ebit_margin: float | None = None) -> dict:
     value = {}
-    as_of_str = as_of
+    as_of_str = as_of if as_of is not None else None
     if as_of is None: as_of = datetime.now()
     else: as_of = datetime.strptime(as_of, "%Y-%m-%d")
     
-    data = get_data(symbol, start_year)
+    data = get_data(symbol, start_year, as_of_str)
     wacc_calc = calc_wacc(data, symbol, freq, n, as_of = as_of_str)
     terminal_growth_ceiling = wacc_calc["Risk_Free_Rate"]
     
@@ -235,7 +235,7 @@ def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as
     metrics = ASSUMPTIONS[symbol]["metrics"]
     nwc_str = metrics["NWC"] if metrics is not None and "NWC" in metrics else "Driver_Ratio"
     
-    d  = driver_ratio(get_data(symbol, start_year), "NWC")[nwc_str]    
+    d  = driver_ratio(get_data(symbol, start_year, as_of), "NWC")[nwc_str]    
     for i in nwc_intensities:
         is_intensity = abs(i - d) < 1e-9
         try:
