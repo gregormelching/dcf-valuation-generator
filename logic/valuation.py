@@ -48,6 +48,12 @@ MC_SEED = 12345
 MC_Z = 1.96
 MC_PERCENTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 MC_BORDERS = (min(TERMINAL_GROWTHS), TERMINAL_GROWTH, max(TERMINAL_GROWTHS))
+IMPLIED_ITERATIONS = 80
+IMPLIED_EPS = 1e-6
+IMPLIED_MARGIN_BOUNDS = (0.0, 0.95)
+IMPLIED_WACC_UPPER = 0.05
+IMPLIED_LEVERS = ("ebit_margin", "wacc_offset", "terminal_growth", "nwc_intensity")
+IMPLIED_NWC_BOUNDS = (-0.5, 0.5)
 
 def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
     if symbol not in ASSUMPTIONS: raise ValueError(f"Symbol {symbol} is not in ASSUMPTIONS.")
@@ -326,6 +332,79 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     
     return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
 
+def _lever_value(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None, key: str, x: float) -> float | None:
+    try:
+        return dcf_value(symbol, start_year, years, freq, n, as_of = as_of, **{key: x})["wacc"]["Value_Per_Share"]
+    except ValueError:
+        return None
+
+def implied_assumptions(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, levers: tuple = IMPLIED_LEVERS, target: float | None = None) -> dict:
+    value = {}
+    
+    dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of)
+    vps = dcf["wacc"]["Value_Per_Share"]
+    mp = dcf["wacc"]["Market_Price"]
+    tg = dcf["wacc"]["Terminal_Growth"]
+    wacc = dcf["wacc"]["WACC"]
+    wacc_low = dcf["wacc_low"]["WACC"]
+    wacc_high = dcf["wacc_high"]["WACC"]
+    target = mp if target is None else target
+    ceiling = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, terminal_growth = 1.0)["wacc"]["Terminal_Growth"]
+    
+    data = get_data(symbol, start_year, as_of)
+    max_OI = max([data[i]["OperatingIncome"]["Value"] / data[i]["Revenue"]["Value"] for i in driver_ratio(data, "OperatingIncome")["Years"]])
+    min_NWC = min([data[i]["NWC"]["Value"] / data[i]["Revenue"]["Value"] for i in driver_ratio(data, "NWC")["Years"]])
+    
+    metrics = ASSUMPTIONS[symbol]["metrics"]
+    nwc_str = metrics["NWC"] if metrics is not None and "NWC" in metrics else "Driver_Ratio"
+    base_nwc = driver_ratio(data, "NWC")[nwc_str]
+
+    bases = {"ebit_margin": dcf["wacc"]["EBIT_Margin_Target"], "wacc_offset": 0.0, "terminal_growth": tg, "nwc_intensity": base_nwc}
+    specs = [
+        ("ebit_margin", IMPLIED_MARGIN_BOUNDS[0], IMPLIED_MARGIN_BOUNDS[1], True, max_OI, "Max_Hist_OI_Margin"),
+        ("wacc_offset", -(wacc_low - tg) + IMPLIED_EPS, IMPLIED_WACC_UPPER, False, (wacc_high - wacc_low) / 2, "WACC_CI_Half"),
+        ("terminal_growth", 0.0, ceiling - IMPLIED_EPS, True, ceiling, "Terminal_Growth_Ceiling"),
+        ("nwc_intensity", IMPLIED_NWC_BOUNDS[0], IMPLIED_NWC_BOUNDS[1], False, min_NWC, "Min_Hist_NWC_Intensity"),
+    ]
+
+    for name, lo, hi, increasing, comparator, source in specs:
+        if name not in levers: continue
+        f_lo = _lever_value(symbol, start_year, years, freq, n, as_of, name, lo)
+        f_hi = _lever_value(symbol, start_year, years, freq, n, as_of, name, hi)
+        required = None
+        status = "solved"
+
+        if f_lo is None or f_hi is None: status = "no_bracket"
+        elif increasing and f_hi < target: required, status = hi, "unreachable"
+        elif increasing and f_lo > target: required, status = lo, "unreachable"
+        elif not increasing and f_lo < target: required, status = lo, "unreachable"
+        elif not increasing and f_hi > target: required, status = hi, "unreachable"
+        else:
+            a, b = lo, hi
+            for _ in range(IMPLIED_ITERATIONS):
+                m = (a + b) / 2
+                f_m = _lever_value(symbol, start_year, years, freq, n, as_of, name, m)
+                if f_m is None:
+                    status = "no_bracket"
+                    break
+                if (f_m < target) == increasing: a = m
+                else: b = m
+            if status == "solved": required = (a + b) / 2
+
+        ratio = None
+        if status == "solved" and comparator not in (0, None): ratio = abs(required) / abs(comparator)
+
+        if ratio is None: verdict = status
+        elif ratio <= 1: verdict = "Plausible"
+        else: verdict = "Implausible"
+
+        value[name] = {"Required": required, "Base": bases[name], "Status": status, "Bracket": (lo, hi), "Comparator": comparator, "Comparator_Source": source, "Ratio": ratio, "Verdict": verdict}
+
+    closable = sorted(name for name in value if value[name]["Verdict"] == "Plausible")
+
+    return {"Symbol": symbol, "As_Of": dcf["wacc"]["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Target": target, "Gap": vps / target - 1, "WACC": wacc, "Terminal_Growth_Ceiling": ceiling, "Levers": value, "Closable": closable}
+
 if __name__ == "__main__":
     symbol = "apple"
+    print(dcf_value(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-30"))
 
