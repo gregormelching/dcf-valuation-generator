@@ -2918,6 +2918,81 @@ erwirtschaftet haben.
 
 Keine Wertänderung, der Schritt rechnet nur mit. Suite 58 → 68.
 
+#### Step 22 — das Lesefenster an `as_of` gebunden, Monte Carlo neu gepinnt — DONE
+
+Der Nachtrag aus Schritt 18, geschlossen 2026-08-30. `database.py` → `get_data` las gegen
+`datetime.now().year`; ab dem ersten Ingest im Januar 2027 hätte ein auf 2026-08-19 gepinnter Lauf
+Teslas und Boeings FY2026 mitgezogen. `get_data` nimmt jetzt `as_of` als ISO-String und verwirft
+jedes Geschäftsjahr, dessen frühestes `Filed` später als der Stichtag liegt.
+
+**Die Jahreszahl reicht nicht, und das war die eigentliche Korrektur am ursprünglichen Plan.** Ein
+Schnitt `year <= as_of.year` behebt genau den benannten Fall nicht: Teslas FY2026 endet am
+2026-12-31 und wird um den 2027-01-29 eingereicht — die Jahreszahl 2026 passiert einen 2026er-Schnitt
+anstandslos. Das Prädikat muss das Einreichungsdatum sein, nicht die Periode.
+
+**Jahresebene, nicht Zeilenebene, und der Grund ist unangenehm.** `filed` ist das Datum des *letzten
+Schreibvorgangs*, nicht der Erstveröffentlichung: newest-filing-wins überschreibt die Vorjahreszahlen
+mit dem jeweils neuesten 10-K. Gemessen tragen 12 von 13 Zeilen von Microsofts FY2025 das Datum
+2026-07-29, also das der FY2026-Einreichung. Ein zeilenweiser Schnitt vor dem letzten Ingest würde
+damit fast die gesamte Historie ausräumen. Der Schnitt liegt deshalb auf dem Minimum der
+Filing-Daten eines Jahres.
+
+**`Filed IS NULL` darf nichts entscheiden.** Das ist exakt der Marker für den fehlenden Metrikwert —
+683 Zeilen, keine einzige davon mit `value`. Ohne expliziten Ausschluss aus dem `min()` verschwindet
+Apples `InterestExpense` 2024/2025 als Schlüssel statt als Wert, und `COD_Year` kippt von 2023 auf
+2025. Das ist die Absenz-Falle aus der `CLAUDE.md`: `cost_of_debt` ist gegen `Value is None`
+geschrieben, nicht gegen einen fehlenden Key.
+
+**Eine unbeabsichtigte Abhängigkeit, die dabei sichtbar wurde.** Über alle 52 Firmenjahre ab 2016 ist
+das früheste `Filed` eines Jahres *ausnahmslos* das von `SharesOutstanding` — der einzige Tag, den
+kein späteres Filing überschreibt, weil er auf der Titelseite steht und nur im eigenen Bericht
+vorkommt. Die Jahresvintage hängt damit faktisch an einer einzigen Metrik. Heute folgenlos (0 Jahre
+ohne `SharesOutstanding`), aber es ist kein Design, sondern ein Nebeneffekt, und es gehört bei jedem
+Eingriff in `WORKING_CAPITAL_TAGS` oder die Metrikliste mitgedacht.
+
+**Was der Schritt nicht löst.** Der Schnitt entscheidet, *ob* ein Geschäftsjahr am Stichtag existierte,
+nicht *welche Zahlen* damals veröffentlicht waren. Ein rückdatierter Lauf liest weiterhin die heute
+restated Werte. Point-in-time bleibt vertagt (Schritt 6b), die Lücke ist nur kleiner geworden.
+
+**Kein Wert bewegt sich am Stichtag** — das neueste `Filed` im Cache ist 2026-08-04, alle fünf
+`Value_Per_Share` sind bitgleich. Der Schnitt ist damit unerreichter Code am Stichtag und musste an
+`get_data` selbst gepinnt werden, dieselbe Lage wie beim Terminal-Growth-Deckel aus Schritt 20:
+
+| Aufruf | `max(data)` | Jahre | 2025 `Revenue` |
+|---|---|---|---|
+| `get_data("microsoft", 2016, "2026-06-30")` | 2025 | 10 | belegt |
+| `get_data("microsoft", 2016, "2026-08-19")` | 2026 | 11 | belegt |
+
+`test_data_vintage` pinnt beide Zustände plus die Gegenprobe auf `Revenue` — die ist der wichtigste
+Teil, weil sie als einzige einen späteren Umbau auf einen zeilenweisen Schnitt rot macht.
+`test_vintage_keeps_missing` pinnt, dass Apples `InterestExpense` 2025 als Schlüssel mit `Value =
+None` überlebt. `CUT_PG` für P&Gs engen Fall (Schnitt 2026-08-01, eingereicht 2026-08-04) wurde
+verworfen statt tot stehenzulassen.
+
+**`MC_GOLDEN` neu gepinnt, und die Erwartung aus Schritt 18 war zu eng.** Dort stand, nur Microsoft
+und P&G seien rot. Tatsächlich haben die Schritte 19 bis 21 alle fünf bewegt — die
+Reinvestitionsnaht wirkt auf jede Projektion:
+
+| `Mean` | vorher | nachher | |
+|---|---|---|---|
+| apple | 132,2248 | 127,6177 | -3,5% |
+| boeing | 41,3822 | 47,2773 | +14,2% |
+| microsoft | 289,2342 | 325,6492 | +12,6% |
+| procter_gamble | 142,2740 | 132,4579 | -6,9% |
+| tesla | 14,7857 | 18,7348 | +26,7% |
+
+P&Gs `P_Above_Market` fällt von 0,399 auf 0,1905. Suite 68 → 70 → **100 passed** ohne Marker-Filter.
+
+**Offen, beim Neupinnen aufgefallen.** Der Monte Carlo ist nicht um den Basisfall zentriert, wo die
+gewählte `margin_base` am Rand der Margenspanne sitzt. Teslas `Margin_Range` ist
+(0,0459 / 0,0459 / 0,0953) — Modus gleich Minimum, Maximum das 2,1-fache —, der MC-Median liegt
+damit 16,5% über dem Basiswert von 15,7087. Boeing kippt in die Gegenrichtung, -9,0%. Bei den
+übrigen drei liegen Median und Basiswert unter 2% auseinander. Die Dreiecksverteilung ist damit bei
+zwei von fünf Firmen keine Streuung um das Ergebnis, sondern eine einseitige Verschiebung davon.
+Das ist eine Aussage über die Wahl der Margenbänder, nicht über das Unternehmen, und gehört vor
+Phase 4 entschieden — ein Dashboard, das Median und Basisfall nebeneinander zeigt, macht die
+Differenz sonst zu einer Erkenntnis.
+
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
 - Show assumptions and data sources transparently in the output
