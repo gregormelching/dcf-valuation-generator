@@ -432,13 +432,13 @@ def plausible_ceiling(symbol: str, start_year: int, years: int, freq: str, n: in
             except ValueError:
                 pass
     
-    levs = {lever: {"Comparator": lev[lever]["Comparator"], "Comparator_Source": lev[lever]["Comparator_Source"], "Override": lev[lever]["Override"], "Required": lev[lever]["Required"], "Contribution": contrib[lever]} for lever in lev}
+    levs = {lever: {"Comparator": lev[lever]["Comparator"], "Comparator_Source": lev[lever]["Comparator_Source"], "Override": lev[lever]["Override"], "Required": lev[lever]["Required"], "Contribution": contrib[lever], "Status": lev[lever]["Status"], "Ratio": lev[lever]["Ratio"]} for lever in lev}
         
     
-    return {"Symbol": imp_asp["Symbol"], "As_Of": imp_asp["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Ceiling_Value_Per_Share": cvps, "Ceiling_Gap": cvps / mp - 1 if cvps is not None else None, "Reachable": cvps >= mp if cvps is not None else None, "Status": status, "Terminal_Growth_Ceiling": imp_asp["Terminal_Growth_Ceiling"], "Levers": levs}
+    return {"Symbol": imp_asp["Symbol"], "As_Of": imp_asp["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Ceiling_Value_Per_Share": cvps, "Ceiling_Gap": cvps / mp - 1 if cvps is not None else None, "Reachable": cvps >= mp if cvps is not None else None, "Status": status, "Terminal_Growth_Ceiling": imp_asp["Terminal_Growth_Ceiling"], "Levers": levs, "Closable": imp_asp["Closable"]}
 
 if __name__ == "__main__":
     symbol = "apple"
-    print(implied_assumptions(symbol, 2016, 10, "1mo", N_MONTHS, "2026-09-03"))
+    print(plausible_ceiling(symbol, 2016, 10, "1mo", N_MONTHS, "2026-09-03"))
     
 

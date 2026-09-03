@@ -1,7 +1,7 @@
 import pytest 
 import copy
 from datetime import datetime, timedelta
-from valuation import dcf_value, monte_carlo
+from valuation import dcf_value, monte_carlo, plausible_ceiling
 from prices import price_reference, PRICE_MAX_AGE_DAYS
 from database import get_prices, get_data
 from wacc_calculation import N_MONTHS, synthetic_cost_of_debt
@@ -20,6 +20,7 @@ FUTURE = "2999-12-31"
 GUARD_SYMBOL = "apple"
 CUT_M = "2026-06-30"
 GUARD_ROIC = 0.3
+LEVER_SUBSET = ("ebit_margin", "wacc_offset", "nwc_intensity")
 
 MC_GOLDEN = {
     "apple": {
@@ -167,6 +168,59 @@ GOLDEN = {
     },
 }
 
+LEVER_GOLDEN = {
+    "apple": {
+        "Ceiling_Value_Per_Share": 195.1951974197191,
+        "Reachable": False,
+        "Dominant": "terminal_growth",
+        "Contribution": {"ebit_margin": 4.379838999778883, "wacc_offset": 32.470811830925044, "terminal_growth": 47.92430935046164, "nwc_intensity": 0.29945047140969905},
+        "Required": {"ebit_margin": 0.8990223714016288, "wacc_offset": -0.04030137217503402, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Closable": [],
+        "Subset_Ceiling": 147.27088806925747,
+        "Subset_Reachable": False,
+    },
+    "boeing": {
+        "Ceiling_Value_Per_Share": 389.35858587272014,
+        "Reachable": True,
+        "Dominant": "ebit_margin",
+        "Contribution": {"ebit_margin": 246.73650982515989, "wacc_offset": 127.67190117941783, "terminal_growth": 155.0316909150431, "nwc_intensity": 10.124842620544655},
+        "Required": {"ebit_margin": 0.15198542490722722, "wacc_offset": -0.03594572240676071, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Closable": [],
+        "Subset_Ceiling": 234.32689495767704,
+        "Subset_Reachable": True,
+    },
+    "microsoft": {
+        "Ceiling_Value_Per_Share": 544.4265341216474,
+        "Reachable": True,
+        "Dominant": "terminal_growth",
+        "Contribution": {"ebit_margin": 11.648098140896877, "wacc_offset": 117.53930855289462, "terminal_growth": 148.4795720839263, "nwc_intensity": 1.5727258740027992},
+        "Required": {"ebit_margin": 0.7288428473149087, "wacc_offset": -0.02162481794219997, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Closable": [],
+        "Subset_Ceiling": 395.94696203772105,
+        "Subset_Reachable": False,
+    },
+    "procter_gamble": {
+        "Ceiling_Value_Per_Share": 348.8064728168966,
+        "Reachable": True,
+        "Dominant": "terminal_growth",
+        "Contribution": {"ebit_margin": 17.313887260454976, "wacc_offset": 116.73797023801507, "terminal_growth": 181.39624099488825, "nwc_intensity": 0.08585620388799953},
+        "Required": {"ebit_margin": 0.254995722019965, "wacc_offset": -0.003741321563905657, "terminal_growth": 0.030303482669126254, "nwc_intensity": -0.5},
+        "Closable": ["terminal_growth", "wacc_offset"],
+        "Subset_Ceiling": 167.41023182200834,
+        "Subset_Reachable": True,
+    },
+    "tesla": {
+        "Ceiling_Value_Per_Share": 57.82103924852471,
+        "Reachable": False,
+        "Dominant": "ebit_margin",
+        "Contribution": {"ebit_margin": 36.13963914977202, "wacc_offset": 19.831238910018662, "terminal_growth": 8.456331252916364, "nwc_intensity": 0.3644656565213964},
+        "Required": {"ebit_margin": 0.95, "wacc_offset": -0.06284502967524463, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Closable": [],
+        "Subset_Ceiling": 49.36470799560835,
+        "Subset_Reachable": False,
+    },
+}
+
 @pytest.fixture(scope = "module", params = sorted(GOLDEN), ids = sorted(GOLDEN))
 def result(request):
     symbol = request.param
@@ -177,6 +231,12 @@ def result(request):
 def mc_result(request):
     symbol = request.param
     value = monte_carlo(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF, draws = DRAWS, seed = SEED)
+    return (symbol, value)
+
+@pytest.fixture(scope = "module", params = sorted(LEVER_GOLDEN), ids = sorted(LEVER_GOLDEN))
+def l_result(request):
+    symbol = request.param
+    value = plausible_ceiling(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF)
     return (symbol, value)
 
 def test_value_per_share(result):
@@ -379,6 +439,56 @@ def test_vintage_keeps_missing():
     
     assert "InterestExpense" in data[2025].keys()
     assert data[2025]["InterestExpense"]["Value"] is None
+
+def test_cvps(l_result):
+    sym = l_result[0]
+    val = l_result[1]
+    
+    assert val["Ceiling_Value_Per_Share"] == pytest.approx(LEVER_GOLDEN[sym]["Ceiling_Value_Per_Share"], rel = REL)
+    assert val["Status"] == "solved"
+    assert val["Reachable"] is LEVER_GOLDEN[sym]["Reachable"]
+    
+def test_dominant_lever(l_result):
+    sym = l_result[0]
+    val = l_result[1]
+    
+    dominant = max(val["Levers"], key = lambda lev: val["Levers"][lev]["Contribution"])
+    
+    assert dominant == LEVER_GOLDEN[sym]["Dominant"]
+
+def test_lever_detail(l_result):
+    sym = l_result[0]
+    val = l_result[1]
+    
+    for lev in LEVER_GOLDEN[sym]["Contribution"]:
+        assert val["Levers"][lev]["Contribution"] == pytest.approx(LEVER_GOLDEN[sym]["Contribution"][lev], rel = REL)
+    
+    for lev in LEVER_GOLDEN[sym]["Required"]:
+        assert val["Levers"][lev]["Required"] == pytest.approx(LEVER_GOLDEN[sym]["Required"][lev], rel = REL)
+
+def test_sup_add(l_result):
+    sym = l_result[0]
+    val = l_result[1]
+    
+    sum_contribs = sum([val["Levers"][lev]["Contribution"] for lev in val["Levers"]])
+    
+    assert sum_contribs > (val["Ceiling_Value_Per_Share"] - val["Value_Per_Share"])
+
+def test_subset(l_result):
+    sym = l_result[0]
+    val = plausible_ceiling(sym, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF, levers = LEVER_SUBSET)
+    
+    assert val["Ceiling_Value_Per_Share"] == pytest.approx(LEVER_GOLDEN[sym]["Subset_Ceiling"], rel = REL)
+    assert val["Reachable"] is LEVER_GOLDEN[sym]["Subset_Reachable"]
+    assert len(val["Levers"]) == 3
+
+def test_closable(l_result):
+    sym = l_result[0]
+    val = l_result[1]
+    
+    assert val["Closable"] == LEVER_GOLDEN[sym]["Closable"]
+    assert val["Levers"]["nwc_intensity"]["Status"] == "unreachable"
+    assert val["Levers"]["nwc_intensity"]["Ratio"] is None
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
