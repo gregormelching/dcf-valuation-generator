@@ -361,13 +361,13 @@ def implied_assumptions(symbol: str, start_year: int, years: int, freq: str, n: 
 
     bases = {"ebit_margin": dcf["wacc"]["EBIT_Margin_Target"], "wacc_offset": 0.0, "terminal_growth": tg, "nwc_intensity": base_nwc}
     specs = [
-        ("ebit_margin", IMPLIED_MARGIN_BOUNDS[0], IMPLIED_MARGIN_BOUNDS[1], True, max_OI, "Max_Hist_OI_Margin"),
-        ("wacc_offset", -(wacc_low - tg) + IMPLIED_EPS, IMPLIED_WACC_UPPER, False, (wacc_high - wacc_low) / 2, "WACC_CI_Half"),
-        ("terminal_growth", 0.0, ceiling - IMPLIED_EPS, True, ceiling, "Terminal_Growth_Ceiling"),
-        ("nwc_intensity", IMPLIED_NWC_BOUNDS[0], IMPLIED_NWC_BOUNDS[1], False, min_NWC, "Min_Hist_NWC_Intensity"),
+        ("ebit_margin", IMPLIED_MARGIN_BOUNDS[0], IMPLIED_MARGIN_BOUNDS[1], True, max_OI, "Max_Hist_OI_Margin", max_OI),
+        ("wacc_offset", -(wacc_low - tg) + IMPLIED_EPS, IMPLIED_WACC_UPPER, False, (wacc_high - wacc_low) / 2, "WACC_CI_Half", -(wacc_high - wacc_low) / 2),
+        ("terminal_growth", 0.0, ceiling - IMPLIED_EPS, True, ceiling, "Terminal_Growth_Ceiling", ceiling - IMPLIED_EPS),
+        ("nwc_intensity", IMPLIED_NWC_BOUNDS[0], IMPLIED_NWC_BOUNDS[1], False, min_NWC, "Min_Hist_NWC_Intensity", min_NWC),
     ]
 
-    for name, lo, hi, increasing, comparator, source in specs:
+    for name, lo, hi, increasing, comparator, source, override in specs:
         if name not in levers: continue
         f_lo = _lever_value(symbol, start_year, years, freq, n, as_of, name, lo)
         f_hi = _lever_value(symbol, start_year, years, freq, n, as_of, name, hi)
@@ -398,13 +398,47 @@ def implied_assumptions(symbol: str, start_year: int, years: int, freq: str, n: 
         elif ratio <= 1: verdict = "Plausible"
         else: verdict = "Implausible"
 
-        value[name] = {"Required": required, "Base": bases[name], "Status": status, "Bracket": (lo, hi), "Comparator": comparator, "Comparator_Source": source, "Ratio": ratio, "Verdict": verdict}
+        value[name] = {"Required": required, "Base": bases[name], "Status": status, "Bracket": (lo, hi), "Comparator": comparator, "Comparator_Source": source, "Ratio": ratio, "Verdict": verdict, "Override": override}
 
     closable = sorted(name for name in value if value[name]["Verdict"] == "Plausible")
 
     return {"Symbol": symbol, "As_Of": dcf["wacc"]["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Target": target, "Gap": vps / target - 1, "WACC": wacc, "Terminal_Growth_Ceiling": ceiling, "Levers": value, "Closable": closable}
 
+def plausible_ceiling(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, levers: tuple = IMPLIED_LEVERS):
+    imp_asp = implied_assumptions(symbol, start_year, years, freq, n, as_of = as_of, levers = levers) 
+    
+    vps = imp_asp["Value_Per_Share"]
+    mp = imp_asp["Market_Price"]
+    lev = imp_asp["Levers"]
+    
+    dct = {lever: lev[lever]["Override"] for lever in lev}
+    
+    try:
+        dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, **dct)
+        cvps = dcf["wacc"]["Value_Per_Share"]
+        status = "solved"
+    except ValueError as e:
+        cvps = None
+        status = str(e)
+    
+    contrib = {l: None for l in lev}       
+        
+    if cvps is not None:
+        for l in dct:
+            sub = {k: v for k, v in dct.items() if k != l}
+            try:
+                dcf_2 = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, **sub)
+                contrib[l] = cvps - dcf_2["wacc"]["Value_Per_Share"]
+            except ValueError:
+                pass
+    
+    levs = {lever: {"Comparator": lev[lever]["Comparator"], "Comparator_Source": lev[lever]["Comparator_Source"], "Override": lev[lever]["Override"], "Required": lev[lever]["Required"], "Contribution": contrib[lever]} for lever in lev}
+        
+    
+    return {"Symbol": imp_asp["Symbol"], "As_Of": imp_asp["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Ceiling_Value_Per_Share": cvps, "Ceiling_Gap": cvps / mp - 1 if cvps is not None else None, "Reachable": cvps >= mp if cvps is not None else None, "Status": status, "Terminal_Growth_Ceiling": imp_asp["Terminal_Growth_Ceiling"], "Levers": levs}
+
 if __name__ == "__main__":
     symbol = "apple"
-    print(dcf_value(symbol, 2016, 10, "1mo", N_MONTHS, as_of = "2026-08-30"))
+    print(implied_assumptions(symbol, 2016, 10, "1mo", N_MONTHS, "2026-09-03"))
+    
 

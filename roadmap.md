@@ -2993,6 +2993,87 @@ Das ist eine Aussage über die Wahl der Margenbänder, nicht über das Unternehm
 Phase 4 entschieden — ein Dashboard, das Median und Basisfall nebeneinander zeigt, macht die
 Differenz sonst zu einer Erkenntnis.
 
+#### Step 23 — die Bewertungslücke pro Hebel zurückgerechnet — DONE
+
+Phase 5 fragt, ob die Abweichung zum Marktpreis mit plausiblen Inputs erreichbar ist oder nur mit
+unplausiblen. Bis hierhin wurde das von Hand pro Firma beantwortet und war nicht reproduzierbar.
+`valuation.py` → `implied_assumptions` dreht die Rechnung um: pro Stellschraube den Wert lösen, der
+`Value_Per_Share` auf den Marktpreis hebt, und ihn gegen eine aus den eigenen Daten gezogene
+Schranke stellen. Dazu `_lever_value` als Kapselung eines einzelnen `dcf_value`-Aufrufs.
+
+Vier Hebel, weil `dcf_value` genau vier numerische Overrides hat, die ohne Eingriff in `model.py`
+von außen gesetzt werden können: `ebit_margin`, `wacc_offset`, `terminal_growth`, `nwc_intensity`.
+Jeder wird einzeln gelöst, die anderen drei bleiben auf Basis — sobald zwei gleichzeitig laufen, ist
+es kein Zerlegen mehr, sondern ein Fit auf den Marktpreis.
+
+**Die Schranken kommen aus der Historie, nicht aus einer Meinung.** `ebit_margin` gegen die höchste
+je erreichte `OperatingIncome/Revenue` über die sauberen Jahre aus `driver_ratio(...)["Years"]`,
+`nwc_intensity` gegen die niedrigste `NWC/Revenue` derselben Auswahl, `wacc_offset` gegen die halbe
+Breite des eigenen WACC-Konfidenzintervalls, `terminal_growth` gegen den Deckel aus Schritt 20.
+Richtung jeweils die, in die der Hebel den Wert hebt: Maximum bei der Marge, Minimum bei der
+NWC-Intensität. `Ratio` ist der geforderte Wert geteilt durch die Schranke, `Verdict` ist
+`Plausible` bei `Ratio <= 1`.
+
+**Drei Fallen, die den Solver sonst still falsch machen.** Erstens muss die untere WACC-Grenze
+`WACC_Low` freihalten, nicht `WACC`: `dcf_value` rechnet alle drei Beine, und `terminal_value` wirft
+am tiefsten zuerst — mit `-(wacc - g)` liefert jede einzelne Firma `no_bracket`, und der stärkste
+Hebel im Modell meldet nichts. Zweitens wird `terminal_growth` in `dcf_value` still auf den
+RF-Deckel zurückgeschnitten; ohne die Deckel-Probe (ein `dcf_value`-Aufruf mit
+`terminal_growth = 1.0`, der den wirksamen Wert zurückgibt) bisektiert der Solver in eine flache
+Zone oberhalb des Deckels und meldet einen Punkt darin als Lösung. Drittens ist die Richtung nicht
+einheitlich — Marge und Terminal Growth heben den Wert, WACC-Offset und NWC-Intensität senken ihn;
+eine fest verdrahtete Vergleichsrichtung dreht zwei von vier Hebeln um.
+
+**`unreachable` ist ein eigener Status, kein zurückgegebener Randwert**, und `Ratio` bleibt dort
+`None`. Sonst geht "Apple braucht 4,65% Terminal Growth" als Ergebnis durch, obwohl der Deckel dort
+nur bis 158,92 trägt statt bis 305,93.
+
+Gemessen bei `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`, Deckel 0,0465 für alle fünf:
+
+| Symbol | Gap | `ebit_margin` | `wacc_offset` | `terminal_growth` | `nwc_intensity` | `Closable` |
+|---|---|---|---|---|---|---|
+| apple | -58,1% | 0,8990 / 2,81x | -0,0403 / 4,95x | unreachable | unreachable | - |
+| microsoft | -33,6% | 0,7288 / 1,56x | -0,0216 / 2,25x | unreachable | unreachable | - |
+| procter_gamble | -8,8% | 0,2550 / 1,05x | -0,0037 / **0,51x** | **0,0303** / 0,65x | unreachable | wacc_offset, terminal_growth |
+| tesla | -95,4% | unreachable | unreachable | unreachable | unreachable | - |
+| boeing | -78,2% | 0,1520 / 1,28x | -0,0359 / 3,66x | unreachable | unreachable | - |
+
+**Einzeln schließt kein Hebel die Lücke, außer bei P&G.** Der jeweils stärkste Kandidat ist überall
+der WACC, und der müsste bei Apple auf 5,00% und bei Boeing auf 4,44% — beides unter dem
+risikofreien Satz von 4,65%. Als Einzelaussage pro Hebel heißt das: die Abweichung ist nicht mit
+einer einzelnen vertretbaren Annahme erklärbar.
+
+**Gemeinsam sieht es anders aus, und das korrigiert die naheliegende Schlussfolgerung.** Setzt man
+alle vier Hebel gleichzeitig auf ihre Schranke, kommt heraus: apple 195,20 (-36,2% zum Markt),
+microsoft 544,43 (+10,1%), procter_gamble 348,81 (+141,3%), tesla 57,82 (-83,1%), boeing 389,36
+(+68,1%). Für Microsoft, P&G und Boeing liegt der Marktpreis also sehr wohl im erreichbaren Bereich
+des Modells; nur Apple und Tesla bleiben auch gemeinsam unerreichbar. Die Einzelhebel-Tabelle darf
+deshalb nicht als "das Modell hält die Marktpreise für nicht darstellbar" gelesen werden — sie sagt
+nur, dass keine *einzelne* Annahme reicht.
+
+**Mit der ausdrücklichen Einschränkung, dass der Terminal-Growth-Hebel die gemeinsame Rechnung
+dominiert.** Bei P&G bringt er allein +67,4%, bei Boeing +60,5%. Ein ewiges Wachstum in Höhe des
+risikofreien Satzes ist die äußerste Kante des Modells, kein plausibler Zentralwert; die
+Gemeinschaftszahl ist damit eine Obergrenze des Erreichbaren, kein Szenario. Wer sie als Szenario
+liest, hat den Deckel aus Schritt 20 als Prognose missverstanden.
+
+**Was pro Firma übrig bleibt.** Boeing hängt fast vollständig an einem einzigen Eingang: die
+Startmarge von 4,79% stammt aus einem gedrückten Jahr, und allein die historische Höchstmarge von
+11,85% hebt den Wert um +244% auf 173,45. Tesla ist der einzige Fall, in dem gar nichts trägt —
+implizite ROIC 6,4% unter WACC 11,26%, mehr Explizitjahre senken den Wert (20 Jahre: 13,38), und
+selbst die gemeinsame Obergrenze liegt um den Faktor 5,9 unter dem Markt. Das ist entweder eine
+Aussage über den Markt oder eine über den Modellumfang (kein Energie-/FSD-Geschäft separat
+modelliert), und es ist mit den vorhandenen Hebeln nicht entscheidbar. Apple liegt dazwischen und
+zeigt auf die beiden Eingänge, die das Instrument nicht abdeckt.
+
+**Was das Instrument nicht abdeckt, und das ist der nächste offene Punkt.** `years` ist der stärkste
+Hebel überhaupt für Microsoft (10 Jahre -33,6%, 20 Jahre -7,8%, 15 Jahre -21,1%), aber ganzzahlig
+und damit nicht bisektierbar. Umsatzwachstum hat gar keinen numerischen Override; die drei
+String-Basen spannen bei Apple nur 109,21 bis 136,43 gegen nötige 305,93, ein numerischer Parameter
+würde `project_revenue`, `project_fcf` und `dcf_value` anfassen. Und der Vergleich läuft weiterhin
+gegen den Marktpreis, nicht gegen Konsens-Kursziele — Phase 5 verlangt letzteres ausdrücklich, und
+dafür existiert im Projekt keine Datenquelle.
+
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
 - Show assumptions and data sources transparently in the output
