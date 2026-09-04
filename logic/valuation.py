@@ -54,6 +54,8 @@ IMPLIED_MARGIN_BOUNDS = (0.0, 0.95)
 IMPLIED_WACC_UPPER = 0.05
 IMPLIED_LEVERS = ("ebit_margin", "wacc_offset", "terminal_growth", "nwc_intensity")
 IMPLIED_NWC_BOUNDS = (-0.5, 0.5)
+IMPLIED_YEARS_BOUNDS = (1, 30)
+IMPLIED_YEARS_COMPARATOR = 15
 
 def resolve_assumptions(symbol: str, base: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH) -> dict:
     if symbol not in ASSUMPTIONS: raise ValueError(f"Symbol {symbol} is not in ASSUMPTIONS.")
@@ -404,6 +406,54 @@ def implied_assumptions(symbol: str, start_year: int, years: int, freq: str, n: 
 
     return {"Symbol": symbol, "As_Of": dcf["wacc"]["As_Of"], "Value_Per_Share": vps, "Market_Price": mp, "Target": target, "Gap": vps / target - 1, "WACC": wacc, "Terminal_Growth_Ceiling": ceiling, "Levers": value, "Closable": closable}
 
+def implied_horizon(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, target: float | None = None, bounds: tuple = IMPLIED_YEARS_BOUNDS, comparator: int = IMPLIED_YEARS_COMPARATOR):
+    
+    if bounds[0] < 1 or bounds[1] < bounds[0]: raise ValueError(f"Invalid bounds {bounds}: lower bound must be at least 1 and not above the upper bound.")
+    
+    dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of)
+    
+    vps = dcf["wacc"]["Value_Per_Share"]
+    mp = dcf["wacc"]["Market_Price"]
+    ao = dcf["wacc"]["As_Of"]
+    target = mp if target is None else target
+    curve = {}
+    failures = {}
+    
+    for i in range(bounds[0], bounds[1] + 1):
+        try:
+            dcf_i = dcf_value(symbol, start_year, i, freq, n, as_of = as_of)
+            curve[i] = dcf_i["wacc"]["Value_Per_Share"]
+        except ValueError as e:
+            curve[i] = None
+            failures[i] = str(e)
+    
+    success = {i: curve[i] for i in curve if curve[i] is not None}
+    
+    direction = "up"
+    status = "unreachable"
+    required_years = None
+    
+    if success[min(success)] > success[max(success)]: direction = "down"
+    
+    for i in sorted(success):
+        if success[i] >= target:
+            required_years = i 
+            status = "solved"
+            break
+        
+    best_value = max([success[i] for i in success])
+    best_year = max([i for i in success if success[i] == best_value])
+    
+    ratio = required_years / comparator if status == "solved" else None
+    
+    if ratio is None: verdict = status
+    elif ratio <= 1: verdict = "Plausible"
+    else: verdict = "Implausible"
+    
+    gap = vps / target - 1
+    
+    return {"Symbol": symbol, "Best_Year": best_year, "Best_Value": best_value, "Required_Years": required_years, "Ratio": ratio, "Verdict": verdict, "Status": status, "Direction": direction, "As_Of": ao, "Value_Per_Share": vps, "Market_Price": mp, "Target": target, "Gap": gap, "Curve": curve, "Failures": failures, "Bounds": bounds, "Comparator": comparator, "Comparator_Source": "Convention_Explicit_Horizon", "Base_Years": years}
+
 def plausible_ceiling(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, levers: tuple = IMPLIED_LEVERS):
     imp_asp = implied_assumptions(symbol, start_year, years, freq, n, as_of = as_of, levers = levers) 
     
@@ -439,6 +489,6 @@ def plausible_ceiling(symbol: str, start_year: int, years: int, freq: str, n: in
 
 if __name__ == "__main__":
     symbol = "apple"
-    print(plausible_ceiling(symbol, 2016, 10, "1mo", N_MONTHS, "2026-09-03"))
+    print(implied_horizon(symbol, 2016, 10, "1mo", N_MONTHS, "2026-09-04"))
     
 

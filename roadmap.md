@@ -3074,6 +3074,74 @@ würde `project_revenue`, `project_fcf` und `dcf_value` anfassen. Und der Vergle
 gegen den Marktpreis, nicht gegen Konsens-Kursziele — Phase 5 verlangt letzteres ausdrücklich, und
 dafür existiert im Projekt keine Datenquelle.
 
+#### Step 24 — der Prognosehorizont als Hebel — DONE
+
+Der erste der drei in Schritt 23 offenen Punkte. `years` war dort als stärkster Einzelhebel für
+Microsoft gemessen (10 Jahre -33,6%, 15 Jahre -21,1%, 20 Jahre -7,8%), steckte aber nicht im
+Instrument — die Aussage "keine einzelne Annahme schließt die Lücke" war damit über einen
+unvollständigen Hebelsatz getroffen. `valuation.py` → `implied_horizon` schließt das.
+
+**Scannen statt bisektieren.** Ein `dcf_value`-Aufruf kostet bei warmem Cache rund 8 ms, die 30
+Horizonte also gut 0,2 s pro Firma. Bisektion würde nichts Messbares sparen, aber Monotonie
+voraussetzen, die niemand geprüft hat; der lineare Scan liefert die vollständige Kurve, die Richtung
+und den besten erreichbaren Punkt ohne Zusatzkosten mit. Die Kurve bleibt als `Curve` im Ergebnis.
+
+**Die Richtung wird aus der Kurve gelesen, nicht gesetzt.** Dieselbe Falle wie bei den vier Hebeln
+aus Schritt 23: Apple, Microsoft, P&G und Boeing steigen mit dem Horizont, Tesla fällt — von 18,67
+bei einem Jahr auf 11,73 bei dreißig. Das ist der numerische Beleg für die bisher nur behauptete
+Aussage implizite ROIC 6,4% unter WACC 11,26%: jedes zusätzliche Explizitjahr vernichtet dort Wert.
+Eine verdrahtete Richtung würde bei Tesla im `unreachable`-Zweig das falsche Randjahr als besten
+Punkt melden.
+
+**Bewusst keine fünfte Zeile in `specs` und nicht Teil von `plausible_ceiling`.** Technisch, weil
+`_lever_value` `years` bereits positional an `dcf_value` reicht — ein `**{"years": ...}` löst dort
+`TypeError` aus, den die vorhandene `except ValueError`-Absicherung nicht fängt. Inhaltlich, weil
+die gemeinsame Obergrenze aus Schritt 23 "alle Hebel gleichzeitig an ihrer historisch belegten
+Kante" bedeutet, und der Horizont keine solche Kante hat.
+
+**Und das ist die eigentliche Schwäche dieses Hebels: seine Schranke ist eine Konvention, keine
+Messung.** Marge, NWC-Intensität, WACC und Terminal Growth ziehen ihre Grenze aus den eigenen Daten
+der Firma; für `years` gibt es keine solche Quelle. Gesetzt sind deshalb
+`IMPLIED_YEARS_COMPARATOR = 15` und `IMPLIED_YEARS_BOUNDS = (1, 30)`, beide als offen deklarierte
+Annahme — `Comparator_Source` steht als Konventionsname im Ergebnis, und `Bounds` und `Comparator`
+reisen mit, weil "unreachable" sonst nicht interpretierbar ist.
+
+Gemessen bei `as_of = 2026-08-19`, `start_year = 2016`, Basis `years = 10`, `bounds = (1, 30)`,
+`comparator = 15`:
+
+| Symbol | 10 Jahre | 15 Jahre | 30 Jahre | Richtung | `Required_Years` | `Ratio` | `Verdict` |
+|---|---|---|---|---|---|---|---|
+| apple | 128,17 | 139,71 | 168,07 | steigend | - | - | unreachable |
+| microsoft | 328,36 | 389,91 | 603,24 | steigend | 23 | 1,53 | Implausible |
+| procter_gamble | 131,79 | 133,43 | 137,28 | steigend | - | - | unreachable |
+| tesla | 15,71 | 14,44 | 11,73 | fallend | - | - | unreachable |
+| boeing | 50,43 | 63,48 | 107,14 | steigend | - | - | unreachable |
+
+**Der Hebel dreht kein Urteil, und genau das ist sein Beitrag.** Microsoft scheitert jetzt
+quantifiziert statt gar nicht bewertet zu werden: 23 nötige Jahre gegen 15 vertretbare, Faktor 1,53.
+Die anderen vier bleiben im Bereich unerreichbar.
+
+**Der Deckel trägt das Urteil, nicht die Rechnung — nachgemessen.** Ohne obere Grenze erreicht
+Boeing den Marktpreis bei 63 Jahren und P&G bei 94; beide kippen dann formal auf `solved`. Als
+Prognose ist das sinnlos, als Befund über das Instrument ist es zentral: der Unterschied zwischen
+"unerreichbar" und "erreichbar" liegt hier allein in einer gesetzten Zahl. `test_horizon_bounds_decide`
+in `tests/test_golden_values.py` nagelt beide Zustände nebeneinander fest, damit das im Testcode
+steht und nicht nur hier. Nur Apple und Tesla sind auch ohne Deckel unerreichbar — Apple konvergiert
+bei 100 Jahren gegen 235,99 statt der nötigen 305,93, Tesla fällt auf 7,16.
+
+**Ein toter Pfad, bewusst stehen gelassen.** Die `try`/`except`-Klammer im Scan und das `Failures`-
+Dict können derzeit nicht auslösen: kein `raise ValueError` in `dcf_value`, `project_fcf` oder
+`terminal_value` hängt an `years`, und der Basisaufruf läuft mit derselben Konfiguration bereits
+vorher durch. Entweder ist die Kurve vollständig belegt oder die Funktion kommt nie bis zum Loop.
+Die Struktur bleibt trotzdem, falls je ein jahresabhängiger Abbruch dazukommt; `assert
+val["Failures"] == {}` ist damit heute eine Tautologie und keine Absicherung.
+
+**Offen bleiben die zwei anderen Punkte aus Schritt 23.** Umsatzwachstum hat weiterhin keinen
+numerischen Override — die drei String-Basen spannen bei Apple nur 109,21 bis 136,43 gegen nötige
+305,93, und ein numerischer Parameter würde `project_revenue`, `project_fcf` und `dcf_value`
+anfassen. Und der Vergleich läuft weiter gegen den Marktpreis statt gegen Konsens-Kursziele, wofür
+im Projekt keine Datenquelle existiert.
+
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
 - Show assumptions and data sources transparently in the output

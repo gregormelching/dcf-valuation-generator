@@ -1,7 +1,7 @@
 import pytest 
 import copy
 from datetime import datetime, timedelta
-from valuation import dcf_value, monte_carlo, plausible_ceiling
+from valuation import dcf_value, monte_carlo, plausible_ceiling, implied_horizon
 from prices import price_reference, PRICE_MAX_AGE_DAYS
 from database import get_prices, get_data
 from wacc_calculation import N_MONTHS, synthetic_cost_of_debt
@@ -21,6 +21,11 @@ GUARD_SYMBOL = "apple"
 CUT_M = "2026-06-30"
 GUARD_ROIC = 0.3
 LEVER_SUBSET = ("ebit_margin", "wacc_offset", "nwc_intensity")
+HORIZON_BOUNDS = (1, 30)
+HORIZON_COMPARATOR = 15
+HORIZON_ANCHOR = 15
+HORIZON_WIDE_BOUNDS = (1, 100)
+HORIZON_WIDE_REQUIRED = {"boeing": 63, "procter_gamble": 94}
 
 MC_GOLDEN = {
     "apple": {
@@ -221,6 +226,64 @@ LEVER_GOLDEN = {
     },
 }
 
+HORIZON_GOLDEN = {
+    "apple": {
+        "Required_Years": None,
+        "Ratio": None,
+        "Verdict": "unreachable",
+        "Status": "unreachable",
+        "Direction": "up",
+        "Best_Year": 30,
+        "Best_Value": 168.07045762035057,
+        "Anchor": 139.71402429765308,
+        "Gap": -0.5810426552984793,
+    },
+    "boeing": {
+        "Required_Years": None,
+        "Ratio": None,
+        "Verdict": "unreachable",
+        "Status": "unreachable",
+        "Direction": "up",
+        "Best_Year": 30,
+        "Best_Value": 107.13712601611122,
+        "Anchor": 63.480673544284315,
+        "Gap": -0.7823407342311874,
+    },
+    "microsoft": {
+        "Required_Years": 23,
+        "Ratio": 1.5333333333333334,
+        "Verdict": "Implausible",
+        "Status": "solved",
+        "Direction": "up",
+        "Best_Year": 30,
+        "Best_Value": 603.2363699832133,
+        "Anchor": 389.91297225355964,
+        "Gap": -0.3359256540603588,
+    },
+    "procter_gamble": {
+        "Required_Years": None,
+        "Ratio": None,
+        "Verdict": "unreachable",
+        "Status": "unreachable",
+        "Direction": "up",
+        "Best_Year": 30,
+        "Best_Value": 137.28497315491944,
+        "Anchor": 133.4334396342254,
+        "Gap": -0.08826931757094636,
+    },
+    "tesla": {
+        "Required_Years": None,
+        "Ratio": None,
+        "Verdict": "unreachable",
+        "Status": "unreachable",
+        "Direction": "down",
+        "Best_Year": 1,
+        "Best_Value": 18.67059538344373,
+        "Anchor": 14.443866543459722,
+        "Gap": -0.954104350860684,
+    },
+}
+
 @pytest.fixture(scope = "module", params = sorted(GOLDEN), ids = sorted(GOLDEN))
 def result(request):
     symbol = request.param
@@ -237,6 +300,18 @@ def mc_result(request):
 def l_result(request):
     symbol = request.param
     value = plausible_ceiling(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF)
+    return (symbol, value)
+
+@pytest.fixture(scope = "module", params = sorted(HORIZON_GOLDEN), ids = sorted(HORIZON_GOLDEN))
+def h_result(request):
+    symbol = request.param
+    value = implied_horizon(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF)
+    
+
+@pytest.fixture(scope = "module", params = sorted(HORIZON_GOLDEN), ids = sorted(HORIZON_GOLDEN))
+def h_result(request):
+    symbol = request.param
+    value = implied_horizon(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF)
     return (symbol, value)
 
 def test_value_per_share(result):
@@ -467,7 +542,6 @@ def test_lever_detail(l_result):
         assert val["Levers"][lev]["Required"] == pytest.approx(LEVER_GOLDEN[sym]["Required"][lev], rel = REL)
 
 def test_sup_add(l_result):
-    sym = l_result[0]
     val = l_result[1]
     
     sum_contribs = sum([val["Levers"][lev]["Contribution"] for lev in val["Levers"]])
@@ -489,6 +563,63 @@ def test_closable(l_result):
     assert val["Closable"] == LEVER_GOLDEN[sym]["Closable"]
     assert val["Levers"]["nwc_intensity"]["Status"] == "unreachable"
     assert val["Levers"]["nwc_intensity"]["Ratio"] is None
+
+def test_horizon_required(h_result):
+    sym = h_result[0]
+    val = h_result[1]
+
+    assert val["Required_Years"] == HORIZON_GOLDEN[sym]["Required_Years"]
+    assert val["Status"] == HORIZON_GOLDEN[sym]["Status"]
+    assert val["Verdict"] == HORIZON_GOLDEN[sym]["Verdict"]
+
+    if HORIZON_GOLDEN[sym]["Ratio"] is None:
+        assert val["Ratio"] is None
+    else:
+        assert val["Ratio"] == pytest.approx(HORIZON_GOLDEN[sym]["Ratio"], rel = REL)
+
+def test_horizon_direction(h_result):
+    sym = h_result[0]
+    val = h_result[1]
+
+    assert val["Direction"] == HORIZON_GOLDEN[sym]["Direction"]
+    assert val["Best_Year"] == HORIZON_GOLDEN[sym]["Best_Year"]
+    assert val["Best_Value"] == pytest.approx(HORIZON_GOLDEN[sym]["Best_Value"], rel = REL)
+
+def test_horizon_curve(h_result):
+    sym = h_result[0]
+    val = h_result[1]
+
+    assert len(val["Curve"]) == HORIZON_BOUNDS[1] - HORIZON_BOUNDS[0] + 1
+    assert val["Failures"] == {}
+    assert val["Curve"][YEARS] == pytest.approx(GOLDEN[sym]["Value_Per_Share"], rel = REL)
+    assert val["Curve"][YEARS] == pytest.approx(val["Value_Per_Share"], rel = REL)
+    assert val["Curve"][HORIZON_ANCHOR] == pytest.approx(HORIZON_GOLDEN[sym]["Anchor"], rel = REL)
+    assert val["Gap"] == pytest.approx(HORIZON_GOLDEN[sym]["Gap"], rel = REL)
+
+def test_horizon_comparator_visible(h_result):
+    val = h_result[1]
+
+    assert val["Bounds"] == HORIZON_BOUNDS
+    assert val["Comparator"] == HORIZON_COMPARATOR
+    assert val["Comparator_Source"] is not None
+    assert val["Base_Years"] == YEARS
+
+def test_horizon_bounds_guard():
+    with pytest.raises(ValueError):
+        implied_horizon(BOUND_SYMBOL, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF, bounds = (0, 5))
+
+    with pytest.raises(ValueError):
+        implied_horizon(BOUND_SYMBOL, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF, bounds = (10, 5))
+
+@pytest.mark.slow
+def test_horizon_bounds_decide():
+    for sym in HORIZON_WIDE_REQUIRED:
+        val = implied_horizon(sym, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF, bounds = HORIZON_WIDE_BOUNDS)
+
+        assert HORIZON_GOLDEN[sym]["Status"] == "unreachable"
+        assert val["Status"] == "solved"
+        assert val["Required_Years"] == HORIZON_WIDE_REQUIRED[sym]
+        assert val["Verdict"] == "Implausible"
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
