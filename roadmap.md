@@ -3142,6 +3142,95 @@ numerischen Override — die drei String-Basen spannen bei Apple nur 109,21 bis 
 anfassen. Und der Vergleich läuft weiter gegen den Marktpreis statt gegen Konsens-Kursziele, wofür
 im Projekt keine Datenquelle existiert.
 
+#### Step 25 — Umsatzwachstum als numerischer Hebel — DONE
+
+Der zweite der drei in Schritt 23 offenen Punkte. Umsatzwachstum war dort nur über drei String-Basen
+verstellbar, die bei Apple 109,21 bis 136,43 gegen nötige 305,93 spannen — als Hebel also gar nicht
+messbar. `model.py` → `project_revenue` und `project_fcf`, `valuation.py` → `dcf_value` und die
+`specs`-Tabelle in `implied_assumptions` schließen das mit einem numerischen `revenue_growth`.
+
+**Der Override setzt den Startwert des Fades, nicht eine konstante Rate.** `project_revenue`
+interpoliert weiterhin linear von `growth` auf `terminal_growth` über den Horizont; der Parameter
+ersetzt nur den Startpunkt und schaltet `Source` auf `"Override"`. Eine konstante Rate über alle
+Explizitjahre wäre der andere denkbare Schnitt, hätte aber die Fade-Logik des Modells umgangen und
+den Hebel mit dem Terminal-Growth-Hebel verkoppelt.
+
+**Die Richtung ist gemessen, nicht gesetzt.** Ein Scan über -0,50 bis +2,00 ist bei allen fünf Firmen
+streng monoton steigend — auch bei Tesla, das beim Horizont-Hebel aus Schritt 24 fällt. Der
+Unterschied ist sauber erklärbar: mehr Explizitjahre verlängern dort einen wertvernichtenden Pfad
+(impliziter ROIC 6,4% unter WACC 11,26%), mehr Umsatz skaliert dagegen auch die Terminalbasis.
+
+**Die Bracket-Obergrenze ist 2,0, und das ist eine Lehre aus Schritt 24.** Tesla löst bei 1,2878. Mit
+der naheliegenden 1,0 stünde dort `unreachable`, und das Urteil käme wieder aus einer gesetzten Zahl
+statt aus dem Comparator — genau der Vorwurf gegen den `years`-Deckel. Bei `IMPLIED_GROWTH_BOUNDS =
+(-0.5, 2.0)` löst jede Firma, die Schranke trägt nirgends ein Urteil. Die Reserve bei Tesla ist mit
+Faktor 1,55 allerdings dünn genug, dass eine spätere Datenänderung sie kippen kann.
+
+**Comparator ist `max(Rates)`, das höchste historische Jahreswachstum.** `growth_rate` gibt die
+Einzelraten dafür neu als `Rates` heraus, auch im `Insufficient`-Zweig. Formal ist das konsistent mit
+`Max_Hist_OI_Margin` und `Min_Hist_NWC_Intensity`: der beste je erreichte eigene Wert der Firma.
+Ökonomisch ist es die weichste Schranke im ganzen Satz — eine Spitzenmarge ist ein Niveau, eine
+Spitzenwachstumsrate ist eine Ableitung, und sie als Startwert eines Zehnjahres-Fades zu setzen
+behauptet bei Tesla 82,5% Wachstum im ersten Projektionsjahr. Das ist bewusst so gewählt und bewusst
+als Schwäche notiert.
+
+Gemessen bei `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`:
+
+| Symbol | `Base` | `Required` | `Comparator` | `Ratio` | `Verdict` |
+|---|---|---|---|---|---|
+| apple | 0,0630 | 0,3144 | 0,3326 | 0,95 | Plausible |
+| microsoft | 0,1461 | 0,2621 | 0,1796 | 1,46 | Implausible |
+| procter_gamble | 0,0260 | 0,0479 | 0,0728 | 0,66 | Plausible |
+| tesla | 0,0560 | 1,2878 | 0,8251 | 1,56 | Implausible |
+| boeing | 0,1226 | 0,4657 | 0,3450 | 1,35 | Implausible |
+
+**Das korrigiert zwei Aussagen aus Schritt 23.** Erstens: "Einzeln schließt kein Hebel die Lücke,
+außer bei P&G" gilt nicht mehr. Apple schließt sie mit `revenue_growth` bei Ratio 0,95, `Closable`
+steht dort jetzt auf `["revenue_growth"]`. Die Aussage war über einen unvollständigen Hebelsatz
+getroffen, genau wie beim Horizont. Zweitens: "Apple und Tesla bleiben auch gemeinsam unerreichbar"
+ist tot — die gemeinsame Obergrenze erreicht jetzt bei allen fünf Firmen den Marktpreis.
+
+| Symbol | Deckel alt | Deckel neu | `Ceiling_Gap` neu | Beitrag `revenue_growth` | `Dominant` |
+|---|---|---|---|---|---|
+| apple | 195,20 | 518,29 | +69,4% | 323,09 | revenue_growth |
+| microsoft | 544,43 | 617,14 | +24,8% | 72,71 | terminal_growth |
+| procter_gamble | 348,81 | 425,44 | +194,3% | 76,64 | terminal_growth |
+| tesla | 57,82 | 708,88 | +107,1% | 651,06 | revenue_growth |
+| boeing | 389,36 | 947,98 | +309,2% | 558,62 | ebit_margin |
+
+**Und damit hat der Hebel den gemeinsamen Deckel als Indikator entwertet.** `Reachable` ist jetzt bei
+allen fünf Firmen `True`. Vorher trennte die Kennzahl drei erreichbare von zwei unerreichbaren
+Firmen; jetzt trennt sie nichts mehr. Das ist kein Messergebnis über die Firmen, sondern eine Folge
+davon, wie weit `max(Rates)` die Kante schiebt — ein Indikator, der bei jedem Input dasselbe sagt,
+trägt keine Information. Wer den Deckel weiter als Aussage lesen will, braucht einen härteren
+Comparator; naheliegend wäre das Maximum derselben Statistik, die auch die Basis liefert, also über
+rollierende Dreijahresmittel statt über Einzeljahre. Bei Tesla fiele die Schranke damit deutlich
+unter 0,8251 und die `Ratio` würde überall härter. Bewusst nicht jetzt geändert, weil das denselben
+Eingriff bei `max_OI` und `min_NWC` nach sich ziehen müsste, um konsistent zu bleiben.
+
+**Apples 0,95 ist ein Grenzfall, kein Urteil.** `project_revenue` rundet `g_t` auf vier
+Nachkommastellen, der Wert ist im `revenue_growth` also eine Treppenfunktion mit Stufenbreite rund
+1,1e-4 im ersten Projektionsjahr. Die Bisektion konvergiert gegen eine Stufenkante, nicht gegen einen
+Punkt: alles hinter der vierten Stelle von `Required` ist reproduzierbares Rauschen. Ob Apple bei
+0,95 oder über 1,00 landet, hängt an der dritten Stelle des Comparators. "Plausible" heißt dort
+"nicht unterscheidbar von der historischen Kante", nicht "plausibel".
+
+`LEVER_GOLDEN` in `tests/test_golden_values.py` ist auf den Fünf-Hebel-Deckel repinnt, 152 Tests
+grün. Die vier bestehenden `Required`-Werte pro Firma stehen bitweise unverändert — das ist der
+Beleg, dass `implied_assumptions` jeden Hebel unabhängig löst und die fünfte `specs`-Zeile die
+anderen nicht bewegt. `Subset_Ceiling` und `Subset_Reachable` sind ebenfalls unverändert, weil
+`LEVER_SUBSET` den neuen Hebel nicht enthält.
+
+**Offen.** Ein Test, der festhält, dass `IMPLIED_GROWTH_BOUNDS[1]` kein Urteil trägt, fehlt noch —
+das Gegenstück zu `test_horizon_bounds_decide`. Der `Source`-String aus `dcf_value` meldet weiterhin
+die aufgelöste `ASSUMPTIONS`-Basis, auch wenn `revenue_growth` gesetzt ist; nachgemessen liefert
+Apple mit Override 305,90 bei `Source = 1mo+Growth_Rate_Median+gordon`, obwohl der Median von 6,3%
+nicht benutzt wurde. `max(Rates)` in `implied_assumptions` wirft auf leerer Liste ein
+kontextloses `ValueError` — für die fünf Firmen mit n = 9 bis 10 nicht auslösbar, dieselbe Kante
+existiert bei `max_OI` schon vorher. Und der dritte Punkt aus Schritt 23 bleibt unberührt: der
+Vergleich läuft gegen den Marktpreis, nicht gegen Konsens-Kursziele, und dafür existiert im Projekt
+keine Datenquelle.
+
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
 - Show assumptions and data sources transparently in the output

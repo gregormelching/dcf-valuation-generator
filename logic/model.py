@@ -50,7 +50,7 @@ def driver_ratio(data, metric):
     return value
 
 def growth_rate(data: dict) -> dict:
-    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "n": 0, "Source": ""}
+    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "n": 0, "Source": "", "Rates": []}
     years = sorted(data)
     growth_rates = []
     for year in years:
@@ -65,18 +65,23 @@ def growth_rate(data: dict) -> dict:
         median = round(stats.median(growth_rates), 4)
         mean = round(stats.mean(growth_rates), 4)
         mean_last_three = round(stats.mean(growth_rates[-3:]), 4)
-        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "n": len(growth_rates), "Source": "Calculated"})
-    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient"})
+        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "n": len(growth_rates), "Source": "Calculated", "Rates": growth_rates})
+    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient", "Rates": growth_rates})
     return value
   
-def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", terminal_growth: float = TERMINAL_GROWTH) -> dict:
+def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", terminal_growth: float = TERMINAL_GROWTH, revenue_growth: float | None = None) -> dict:
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Growth_Rate": 0, "Revenue": 0} for year in projected_years}
     growth_rates = growth_rate(data)
-    if base not in ["Growth_Rate_Median", "Mean_Last_Three", "Growth_Rate_Mean"]: raise ValueError(f"Unknown base: {base}")
-    if growth_rates[base] is not None: growth = growth_rates[base]
-    else: raise ValueError(f"{base} is not defined")
+    if revenue_growth is None:
+        if base not in ["Growth_Rate_Median", "Mean_Last_Three", "Growth_Rate_Mean"]: raise ValueError(f"Unknown base: {base}")
+        if growth_rates[base] is not None: growth = growth_rates[base]
+        else: raise ValueError(f"{base} is not defined")
+    else:
+        growth = revenue_growth
+        base = "Override"
+        if type(growth) not in (int, float): raise ValueError("Growth is not an integer or float.")
     rev = data[sorted(data)[-1]]["Revenue"]["Value"]
     i = 0
     
@@ -88,7 +93,7 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", te
     
     return value
 
-def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None, ebit_margin: float | None = None) -> dict:
+def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None, ebit_margin: float | None = None, revenue_growth: float | None = None) -> dict:
     last_year = sorted(data)[-1]
     if metrics is None: metrics = {}
     keys = metrics.keys()
@@ -135,7 +140,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     if terminal_roic <= terminal_growth: raise ValueError("Terminal ROIC must be greater than terminal growth")
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     if None in [EBIT_MARGIN, D_AND_A_MARGIN, CAP_EX_MARGIN, NWC_INTENSITY]: raise ValueError("Missing data for EBIT, D&A, CapEx, or Working Capital")
-    rev = project_revenue(data, years, base, terminal_growth)
+    rev = project_revenue(data, years, base, terminal_growth, revenue_growth)
     i = 0
     prev_rev = data[last_year]["Revenue"]["Value"]
     reinvestment_rate = terminal_growth / terminal_roic
@@ -158,7 +163,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         acc_net_reinvest += net_reinvest
         fcf = nopat - net_reinvest
         rrate = net_reinvest / nopat if nopat != 0 else None
-        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str, "Reinvestment": net_reinvest, "Reinvestment_Rate": rrate})
+        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str, "Reinvestment": net_reinvest, "Reinvestment_Rate": rrate, "Growth_Rate_Source": rev[year]["Source"]})
         prev_rev = cur_rev
         
         if i == years:

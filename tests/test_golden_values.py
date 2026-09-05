@@ -1,7 +1,8 @@
 import pytest 
 import copy
 from datetime import datetime, timedelta
-from valuation import dcf_value, monte_carlo, plausible_ceiling, implied_horizon
+import valuation
+from valuation import dcf_value, monte_carlo, plausible_ceiling, implied_horizon, implied_assumptions, IMPLIED_GROWTH_BOUNDS
 from prices import price_reference, PRICE_MAX_AGE_DAYS
 from database import get_prices, get_data
 from wacc_calculation import N_MONTHS, synthetic_cost_of_debt
@@ -26,6 +27,8 @@ HORIZON_COMPARATOR = 15
 HORIZON_ANCHOR = 15
 HORIZON_WIDE_BOUNDS = (1, 100)
 HORIZON_WIDE_REQUIRED = {"boeing": 63, "procter_gamble": 94}
+GROWTH_NARROW_BOUNDS = (-0.5, 1.0)
+GROWTH_NARROW_SYMBOL = "tesla"
 
 MC_GOLDEN = {
     "apple": {
@@ -175,51 +178,51 @@ GOLDEN = {
 
 LEVER_GOLDEN = {
     "apple": {
-        "Ceiling_Value_Per_Share": 195.1951974197191,
-        "Reachable": False,
-        "Dominant": "terminal_growth",
-        "Contribution": {"ebit_margin": 4.379838999778883, "wacc_offset": 32.470811830925044, "terminal_growth": 47.92430935046164, "nwc_intensity": 0.29945047140969905},
-        "Required": {"ebit_margin": 0.8990223714016288, "wacc_offset": -0.04030137217503402, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
-        "Closable": [],
+        "Ceiling_Value_Per_Share": 518.2860449212727,
+        "Reachable": True,
+        "Dominant": "revenue_growth",
+        "Contribution": {"ebit_margin": 12.35640437010261, "wacc_offset": 93.78770821904072, "terminal_growth": 137.44068718594974, "nwc_intensity": 1.7951853936707494, "revenue_growth": 323.09084750155364},
+        "Required": {"ebit_margin": 0.8990223714016288, "wacc_offset": -0.04030137217503402, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5, "revenue_growth": 0.3144374999999999},
+        "Closable": ["revenue_growth"],
         "Subset_Ceiling": 147.27088806925747,
         "Subset_Reachable": False,
     },
     "boeing": {
-        "Ceiling_Value_Per_Share": 389.35858587272014,
+        "Ceiling_Value_Per_Share": 947.9779101825865,
         "Reachable": True,
         "Dominant": "ebit_margin",
-        "Contribution": {"ebit_margin": 246.73650982515989, "wacc_offset": 127.67190117941783, "terminal_growth": 155.0316909150431, "nwc_intensity": 10.124842620544655},
-        "Required": {"ebit_margin": 0.15198542490722722, "wacc_offset": -0.03594572240676071, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Contribution": {"ebit_margin": 575.2605357784505, "wacc_offset": 301.4671974904327, "terminal_growth": 364.1075469174086, "nwc_intensity": 34.919941153752234, "revenue_growth": 558.6193243098663},
+        "Required": {"ebit_margin": 0.15198542490722722, "wacc_offset": -0.03594572240676071, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5, "revenue_growth": 0.46572222222222226},
         "Closable": [],
         "Subset_Ceiling": 234.32689495767704,
         "Subset_Reachable": True,
     },
     "microsoft": {
-        "Ceiling_Value_Per_Share": 544.4265341216474,
+        "Ceiling_Value_Per_Share": 617.1353189793824,
         "Reachable": True,
         "Dominant": "terminal_growth",
-        "Contribution": {"ebit_margin": 11.648098140896877, "wacc_offset": 117.53930855289462, "terminal_growth": 148.4795720839263, "nwc_intensity": 1.5727258740027992},
-        "Required": {"ebit_margin": 0.7288428473149087, "wacc_offset": -0.02162481794219997, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Contribution": {"ebit_margin": 13.274953217676853, "wacc_offset": 134.35735147640418, "terminal_growth": 169.5895287439804, "nwc_intensity": 1.9718786506431343, "revenue_growth": 72.70878485773505},
+        "Required": {"ebit_margin": 0.7288428473149087, "wacc_offset": -0.02162481794219997, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5, "revenue_growth": 0.2620555555555556},
         "Closable": [],
         "Subset_Ceiling": 395.94696203772105,
         "Subset_Reachable": False,
     },
     "procter_gamble": {
-        "Ceiling_Value_Per_Share": 348.8064728168966,
+        "Ceiling_Value_Per_Share": 425.4419274410573,
         "Reachable": True,
         "Dominant": "terminal_growth",
-        "Contribution": {"ebit_margin": 17.313887260454976, "wacc_offset": 116.73797023801507, "terminal_growth": 181.39624099488825, "nwc_intensity": 0.08585620388799953},
-        "Required": {"ebit_margin": 0.254995722019965, "wacc_offset": -0.003741321563905657, "terminal_growth": 0.030303482669126254, "nwc_intensity": -0.5},
-        "Closable": ["terminal_growth", "wacc_offset"],
+        "Contribution": {"ebit_margin": 21.120261922172972, "wacc_offset": 142.7200758682891, "terminal_growth": 221.64147455330738, "nwc_intensity": 0.17763070111482193, "revenue_growth": 76.63545462416073},
+        "Required": {"ebit_margin": 0.254995722019965, "wacc_offset": -0.003741321563905657, "terminal_growth": 0.030303482669126254, "nwc_intensity": -0.5, "revenue_growth": 0.04794444444444444},
+        "Closable": ["revenue_growth", "terminal_growth", "wacc_offset"],
         "Subset_Ceiling": 167.41023182200834,
         "Subset_Reachable": True,
     },
     "tesla": {
-        "Ceiling_Value_Per_Share": 57.82103924852471,
-        "Reachable": False,
-        "Dominant": "ebit_margin",
-        "Contribution": {"ebit_margin": 36.13963914977202, "wacc_offset": 19.831238910018662, "terminal_growth": 8.456331252916364, "nwc_intensity": 0.3644656565213964},
-        "Required": {"ebit_margin": 0.95, "wacc_offset": -0.06284502967524463, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5},
+        "Ceiling_Value_Per_Share": 708.8814891787182,
+        "Reachable": True,
+        "Dominant": "revenue_growth",
+        "Contribution": {"ebit_margin": 507.2371915550159, "wacc_offset": 297.74125313019334, "terminal_growth": 123.11475214909865, "nwc_intensity": 11.583774407670717, "revenue_growth": 651.0604499301935},
+        "Required": {"ebit_margin": 0.95, "wacc_offset": -0.06284502967524463, "terminal_growth": 0.046499000000000006, "nwc_intensity": -0.5, "revenue_growth": 1.2878333333333334},
         "Closable": [],
         "Subset_Ceiling": 49.36470799560835,
         "Subset_Reachable": False,
@@ -300,13 +303,7 @@ def mc_result(request):
 def l_result(request):
     symbol = request.param
     value = plausible_ceiling(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF)
-    return (symbol, value)
-
-@pytest.fixture(scope = "module", params = sorted(HORIZON_GOLDEN), ids = sorted(HORIZON_GOLDEN))
-def h_result(request):
-    symbol = request.param
-    value = implied_horizon(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, AS_OF)
-    
+    return (symbol, value)    
 
 @pytest.fixture(scope = "module", params = sorted(HORIZON_GOLDEN), ids = sorted(HORIZON_GOLDEN))
 def h_result(request):
@@ -620,6 +617,24 @@ def test_horizon_bounds_decide():
         assert val["Status"] == "solved"
         assert val["Required_Years"] == HORIZON_WIDE_REQUIRED[sym]
         assert val["Verdict"] == "Implausible"
+
+def test_implied_assumptions(h_result):
+    sym = h_result[0]
+
+    imp_asp = implied_assumptions(sym, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF)
+    
+    assert imp_asp["Levers"]["revenue_growth"]["Status"] == "solved"
+    assert imp_asp["Levers"]["revenue_growth"]["Required"] < IMPLIED_GROWTH_BOUNDS[1]
+    assert imp_asp["Levers"]["revenue_growth"]["Required"] > IMPLIED_GROWTH_BOUNDS[0]
+    
+
+def test_tesla(monkeypatch):
+    monkeypatch.setattr(valuation, "IMPLIED_GROWTH_BOUNDS", GROWTH_NARROW_BOUNDS)
+    imp_asp = implied_assumptions(GROWTH_NARROW_SYMBOL, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF)
+     
+    assert imp_asp["Levers"]["revenue_growth"]["Status"] == "unreachable"
+    assert imp_asp["Levers"]["revenue_growth"]["Required"] == 1.0
+    assert imp_asp["Levers"]["revenue_growth"]["Ratio"] is None
 
 @pytest.mark.slow
 def test_percentiles(mc_result):
