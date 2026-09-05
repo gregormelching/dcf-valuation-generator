@@ -7,6 +7,7 @@ from validation import OUTLIER_RULES
 TAX_WINDOW_START = 2018
 MARGINAL_TAX_RATE = 0.25
 MIN_YEARS = 3
+COMPARATOR_WINDOW = 3
 TERMINAL_GROWTH = 0.025
     
 def effective_tax_rate(data):
@@ -49,10 +50,19 @@ def driver_ratio(data, metric):
         value.update({"Driver_Ratio": median, "n": len(ratios), "Source": "Insufficient", "Mean_Last_Three": None, "Years": clean})
     return value
 
+def rolling_means(pairs, k):
+    value = []
+    for i in range(len(pairs) - k + 1):
+        w = pairs[i:i+k]
+        if w[-1][0] - w[0][0] != k - 1: continue
+        value.append(stats.mean([v for _, v in w]))
+    return value
+
 def growth_rate(data: dict) -> dict:
-    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "n": 0, "Source": "", "Rates": []}
+    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "n": 0, "Source": "", "Rates": [], "Years": []}
     years = sorted(data)
     growth_rates = []
+    clean = []
     for year in years:
         if year + 1 not in data: continue
         flags = [flag for flag in data[year]["Revenue"]["Flag"] if flag != "outlier"]
@@ -61,12 +71,13 @@ def growth_rate(data: dict) -> dict:
         if data[year]["Revenue"]["Value"] in (0, None) or data[year+1]["Revenue"]["Value"] in (0, None): continue
         yoy_growth = (data[year+1]["Revenue"]["Value"] - data[year]["Revenue"]["Value"]) / data[year]["Revenue"]["Value"]
         growth_rates.append(yoy_growth)
+        clean.append(year)
     if len (growth_rates) >= MIN_YEARS:
         median = round(stats.median(growth_rates), 4)
         mean = round(stats.mean(growth_rates), 4)
         mean_last_three = round(stats.mean(growth_rates[-3:]), 4)
-        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "n": len(growth_rates), "Source": "Calculated", "Rates": growth_rates})
-    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient", "Rates": growth_rates})
+        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "n": len(growth_rates), "Source": "Calculated", "Rates": growth_rates, "Years": clean})
+    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient", "Rates": growth_rates, "Years": clean})
     return value
   
 def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", terminal_growth: float = TERMINAL_GROWTH, revenue_growth: float | None = None) -> dict:
@@ -222,4 +233,3 @@ def roic(data: dict) -> dict:
 
 if __name__ == "__main__":
     data = get_data("microsoft", 2016)
-    print(project_fcf(data, 10, roic(data)["ROIC_Median"]))

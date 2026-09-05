@@ -3221,15 +3221,207 @@ Beleg, dass `implied_assumptions` jeden Hebel unabhängig löst und die fünfte 
 anderen nicht bewegt. `Subset_Ceiling` und `Subset_Reachable` sind ebenfalls unverändert, weil
 `LEVER_SUBSET` den neuen Hebel nicht enthält.
 
-**Offen.** Ein Test, der festhält, dass `IMPLIED_GROWTH_BOUNDS[1]` kein Urteil trägt, fehlt noch —
-das Gegenstück zu `test_horizon_bounds_decide`. Der `Source`-String aus `dcf_value` meldet weiterhin
-die aufgelöste `ASSUMPTIONS`-Basis, auch wenn `revenue_growth` gesetzt ist; nachgemessen liefert
-Apple mit Override 305,90 bei `Source = 1mo+Growth_Rate_Median+gordon`, obwohl der Median von 6,3%
-nicht benutzt wurde. `max(Rates)` in `implied_assumptions` wirft auf leerer Liste ein
-kontextloses `ValueError` — für die fünf Firmen mit n = 9 bis 10 nicht auslösbar, dieselbe Kante
-existiert bei `max_OI` schon vorher. Und der dritte Punkt aus Schritt 23 bleibt unberührt: der
-Vergleich läuft gegen den Marktpreis, nicht gegen Konsens-Kursziele, und dafür existiert im Projekt
-keine Datenquelle.
+**Beide Nacharbeiten sind erledigt.** Der `Source`-String aus `dcf_value` meldete die aufgelöste
+`ASSUMPTIONS`-Basis auch dann, wenn `revenue_growth` gesetzt war — Apple lieferte mit Override 306,05
+bei `Source = 1mo+Growth_Rate_Median+gordon`, obwohl der Median von 6,3% nicht benutzt wurde. Der
+String liest jetzt `fcf[min(fcf)]["Growth_Rate_Source"]` statt `base` und meldet damit `Override`. Das
+ist derselbe Wert, der schon als `Revenue_Growth_Source` in der Zeile steht; er wird einmal gebunden
+und zweimal benutzt. Die Bindung steht innerhalb der WACC-Schleife, weil `fcf` pro Szenario neu
+projiziert wird — außerhalb hätte sie den letzten Durchlauf für alle drei gemeldet.
+
+**Der `max(Rates)`-Punkt war überzeichnet, der Guard bleibt trotzdem.** Eine leere Liste ist an dieser
+Stelle strukturell unerreichbar: `implied_assumptions` ruft `dcf_value` schon in Zeile 347 auf, und
+`project_revenue` wirft bei `Source == "Insufficient"` vorher `ValueError("Growth_Rate_Median is not
+defined")` — nachgemessen an Boeing mit `start_year = 2023`, n = 2. `implied_assumptions` prüft jetzt
+selbst auf `growth["Source"] == "Insufficient"` und wirft mit Symbol und `n`, statt die Invariante aus
+`model.py` zu erben. Der Guard prüft die Quelle, nicht `len(rates) == 0`: bei n = 1 oder 2 käme sonst
+ein Comparator aus einem einzigen Jahr zurück, und der sieht aus wie eine Zahl. Dieselbe Kante bei
+`max_OI` und `min_NWC` bleibt ungeschützt.
+
+**Dabei aufgefallen, offen:** mit dünnem `start_year` stirbt der Pfad noch vor der Wachstumsbasis.
+`implied_assumptions("boeing", 2023, ...)` bricht mit `KeyError: 2021` in `wacc_calculation.py` →
+`debt_to_equity` ab, weil das Beta-Fenster über Jahre iteriert, die im `data`-Dict nicht existieren.
+Das ist die echte ungeschützte Kante bei kurzen Fenstern, und sie liegt in Phase 3c, nicht hier.
+
+Der Bracket-Test ist mit `test_tesla` erledigt: bei `GROWTH_NARROW_BOUNDS = (-0.5, 1.0)`, per
+`monkeypatch.setattr` auf das Modulattribut gesetzt, kippt Tesla auf `unreachable` mit `Required =
+1.0` und `Ratio is None`. Das ist das Gegenstück zu `test_horizon_bounds_decide` und hält fest, dass
+die Schranke bei 2,0 kein Urteil trägt, bei 1,0 aber sehr wohl eins tragen würde.
+
+#### Der externe Anker für Phase 5 — entschieden
+
+**Der dritte offene Punkt aus Schritt 23 war falsch formuliert.** Er lautete, es existiere im Projekt
+keine Datenquelle für Konsens-Kursziele. Die Alternative liegt seit 2026-08-27 vor: die externen
+DCF-Fair-Value-Ranges, die Gregor pro Firma geliefert hat (Gemini-Recherche, Stand August 2026, nicht
+unabhängig verifiziert). Eine bessere Quelle gibt es hier nicht — Analystenkonsens ist über yfinance
+und FRED, die beiden Marktdatenpfade des Projekts, nicht erreichbar, und eine bezahlte Quelle
+anzubinden wäre ein Datenprojekt statt eines Bewertungsprojekts. Damit ist Phase 5 anker-seitig
+bedient, mit dem ausdrücklichen Vorbehalt, dass die Range weicher ist als ein echter Konsens.
+
+**Die Range ist ein zweiter Anker, kein Ziel.** Das Modell wird nicht darauf getuned; sie dient dazu,
+Abweichungen zu dimensionieren. Gemessen bei `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`,
+Preis aus dem `1mo`-Fenster per 2026-07-31:
+
+| Symbol | Basis-VPS | externe Range | Markt | Deckel (5 Hebel) |
+|---|---|---|---|---|
+| apple | 128,17 | 175–285 | 308,64 | 518,29 |
+| microsoft | 328,36 | 380–530 | 464,72 | 617,14 |
+| procter_gamble | 131,79 | 135–175 | 144,49 | 425,44 |
+| tesla | 15,71 | 130–450+ | 311,21 | 708,88 |
+| boeing | 50,43 | 160–390 | 216,14 | 947,98 |
+
+**Zwei Ablesungen, und beide sind unbequem.** Erstens liegt der Basisfall jetzt bei allen fünf Firmen
+unter der Untergrenze der externen Range, auch bei P&G — in der Notiz vom 2026-08-27 lag P&G mit 144
+noch innerhalb, seither haben die Schritte 17 bis 22 den Wert auf 131,79 gedrückt. Der einzige Fall,
+der das Modell je extern bestätigt hat, ist damit weg. Zweitens überschießt der gemeinsame Deckel bei
+allen fünf Firmen die Obergrenze der Range, bei Boeing um Faktor 2,4 und bei P&G um Faktor 2,4. Der
+Deckel soll die Kante des Plausiblen markieren; wenn er systematisch über dem oberen Ende einer
+unabhängig erstellten Spanne liegt, sind die Comparatoren zu weich. Das ist derselbe Befund wie in
+Schritt 25 über `max(Rates)`, nur diesmal von außen bestätigt statt aus der eigenen Konstruktion
+abgeleitet.
+
+**Was daraus folgt und was nicht.** Es folgt nicht, dass die Range recht hat — sie ist unverifiziert
+und selbst modellbasiert. Es folgt, dass zwei unabhängige Instrumente in dieselbe Richtung zeigen:
+der Basisfall ist zu konservativ, die Plausibilitätskante zu großzügig, und der Abstand zwischen
+beiden trägt deshalb weniger Information als die Zahlen suggerieren. Die inhaltliche Konsequenz — ein
+härterer Comparator über rollierende Dreijahresmittel statt über Einzeljahre, konsistent gezogen bei
+`max_OI` und `min_NWC` — bleibt der nächste offene Punkt. Für Tesla bleibt der Fall unentscheidbar:
+15,71 gegen eine Range, deren untere Hälfte auf das Autogeschäft allein zielt und die das Modell
+trotzdem um Faktor 8 verfehlt, deutet auf den Modellumfang, nicht auf einen Rechenfehler.
+
+#### Step 26 — der Comparator auf rollierende Dreijahresmittel — DONE
+
+Der Deckel aus Schritt 25 hat aufgehört, etwas zu unterscheiden: `Reachable` stand bei allen fünf
+Firmen auf `True`, und der gemeinsame Deckel überschoss jede Obergrenze der externen Range. Die
+Ursache lag nicht im Solver, sondern im Comparator — ein einzelnes Spitzenjahr als Kante des
+Plausiblen. `model.py` → `rolling_means` und `growth_rate`, `valuation.py` → `implied_assumptions`
+setzen die Kante jetzt auf das beste zusammenhängende Dreijahresmittel.
+
+**Die Fenster laufen über Jahre, nicht über Listenindizes.** `rolling_means(pairs, k)` nimmt
+`(Jahr, Wert)`-Paare und verwirft jedes Fenster, dessen Jahre nicht lückenlos sind. Ohne diese
+Prüfung mittelt der Flag-Filter stillschweigend über eine Lücke hinweg: fällt ein Jahr wegen eines
+`recon_gap` heraus, stünden 2018, 2019 und 2021 nebeneinander und hießen weiter "Dreijahresmittel".
+`growth_rate` gibt dafür die Startjahre der Ratenpaare als `Years` heraus — `sorted(data)` wäre die
+falsche Liste, weil sie auch die verworfenen Jahre enthält und dann länger ist als `Rates`.
+
+**Ein Fenster von drei Jahren, als Konstante.** `COMPARATOR_WINDOW = 3` in `model.py`, und die
+`Comparator_Source`-Labels hängen per f-String daran, damit Fensterbreite und Beschriftung nicht
+auseinanderlaufen. Drei ist dieselbe Breite wie bei `Mean_Last_Three`; ein längeres Fenster würde bei
+n = 9 bis 10 die Zahl der Fenster so weit drücken, dass der Comparator wieder an einzelnen Jahren
+hängt, nur verdeckt.
+
+**Der Guard prüft die leere Fensterliste, nicht die Jahresanzahl.** `rolling_means` kann auch bei
+n ≥ 3 leer zurückkommen, wenn kein Tripel zusammenhängt; `max()` würde dort wieder kontextlos werfen.
+`implied_assumptions` bindet die drei Listen und wirft mit Symbol, Fensterbreite und Metrik. Für die
+fünf Firmen ist das nicht auslösbar — Apple, Tesla und Boeing haben 7 Fenster, Microsoft und P&G 8.
+
+Gemessen bei `as_of = 2026-08-19`, `start_year = 2016`, `years = 10`:
+
+| Symbol | `max_OI` | `min_NWC` | `max_growth` |
+|---|---|---|---|
+| apple | 0,3197 → 0,3110 | −0,1307 → −0,1283 | 0,3326 → 0,1552 |
+| microsoft | 0,4678 → 0,4568 | −0,1518 → −0,0994 | 0,1796 → 0,1638 |
+| procter_gamble | 0,2426 → 0,2301 | −0,0396 → −0,0361 | 0,0728 → 0,0582 |
+| tesla | 0,1676 → 0,1174 | −0,0706 → −0,0446 | 0,8251 → 0,5500 |
+| boeing | 0,1185 → 0,0995 | 0,0282 → 0,0794 | 0,3450 → 0,1226 |
+
+Die Marge bewegt sich kaum, das Wachstum halbiert sich fast. Das ist der erwartete Unterschied
+zwischen einem Niveau und einer Ableitung: eine Spitzenmarge hält drei Jahre, eine Spitzenwachstums-
+rate nicht. Boeings NWC-Intensität dreht als einzige in die unbequeme Richtung — 0,0794 statt 0,0282
+ist eine härtere Schranke, weil das beste Einzeljahr dort ein Ausreißer in einer nicht-stationären
+Reihe war (Schritt 4d).
+
+**Und damit trennt `Reachable` wieder.**
+
+| Symbol | Deckel | `Reachable` | `Closable` | `Subset_Ceiling` | `Subset_Reachable` |
+|---|---|---|---|---|---|
+| apple | 518,29 → 269,56 | True → False | `["revenue_growth"]` → `[]` | 147,27 → 144,20 | False |
+| boeing | 947,98 → 320,15 | True | `[]` | 234,33 → 190,41 | True → False |
+| microsoft | 617,14 → 568,06 | True | `[]` | 395,95 → 386,75 | False |
+| procter_gamble | 425,44 → 380,14 | True | unverändert (3) | 167,41 → 159,47 | True |
+| tesla | 708,88 → 217,01 | True → False | `[]` | 49,36 → 36,92 | False |
+
+Herausgefallen sind genau Apple und Tesla — dieselben zwei, die Schritt 23 als die harten Fälle
+benannt hatte, bevor der Umsatzhebel sie scheinbar erreichbar machte. Apples `Ratio` beim
+Umsatzwachstum geht von 0,95 auf 2,03, der Grenzfall aus Schritt 25 ist keiner mehr. P&G bleibt die
+einzige Firma mit plausiblen Einzelhebeln (0,824 beim Wachstum, 0,652 beim Terminal Growth, 0,508
+beim WACC-Offset). Boeings Teilmenge kippt mit: 190,41 gegen 231,67 Marktpreis.
+
+**Gegenprobe an der externen Range.** Der Deckel liegt jetzt bei Apple (270 gegen 285), Tesla (217
+gegen 450) und Boeing (320 gegen 390) unter der Obergrenze der extern erhobenen Spanne, bei Microsoft
+knapp darüber (568 gegen 530). Nur P&G bleibt mit 380 gegen 175 grob daneben — dort tragen Terminal
+Growth und WACC-Offset zusammen 325 von 380, also die zwei Hebel, deren Comparator nicht aus der
+Firmenhistorie stammt. Das ist der nächste Ansatzpunkt, falls der Deckel weiter geschärft werden
+soll.
+
+**Was sich ausdrücklich nicht bewegt hat.** Alle 25 `Required`-Werte in `LEVER_GOLDEN` stehen
+bitweise unverändert, vor dem Neupinnen automatisch geprüft. Der Comparator geht nur in `Ratio`,
+`Verdict` und `Override` ein, nicht in die Bisektion — hätte sich ein `Required` bewegt, wäre er in
+den Solver geraten. Neu gepinnt sind `Ceiling_Value_Per_Share`, `Reachable`, `Dominant`,
+`Contribution`, `Closable` und beide `Subset`-Werte; 158 Tests grün.
+
+**Nebenbefund, offen und außerhalb dieser Phase.** Mit dünnem `start_year` bricht
+`implied_assumptions` weiterhin vor allem anderen ab: `wacc_calculation.py` → `adjusted_beta` baut
+sein D/E-Fenster aus der Preishistorie und indiziert damit in `data`, das erst bei `start_year`
+beginnt. Boeing ab 2023 wirft `KeyError: 2021`. Der Fix wäre der Schnitt beider Fenster in
+`adjusted_beta`, nicht in `debt_to_equity` — die Funktion wird auch mit `year = None` gerufen und darf
+keine Fensterpolitik entscheiden.
+
+#### Step 27 — das Beta-Fenster gegen die Datenreihe geschnitten — DONE
+
+Der Nebenbefund aus Schritt 26, jetzt geschlossen. `wacc_calculation.py` → `adjusted_beta` baute sein
+D/E-Fenster aus der Preishistorie (`N_MONTHS`, Dezember-Beobachtungen) und indizierte damit in `data`,
+das erst bei `start_year` beginnt. Zwei unabhängige Fenster, und bei kurzem `start_year` enthielt das
+erste Jahre, die das zweite nicht hat: Boeing ab 2023 warf `KeyError: 2021`.
+
+**Der Schnitt liegt in `adjusted_beta`, nicht in `debt_to_equity`.** Die Jahresliste wird gegen `data`
+gefiltert, bevor sie in die Mittelwertbildung geht, und eine leere Schnittmenge wirft. `debt_to_equity`
+wird auch mit `year = None` für den aktuellen Stichtag gerufen und darf deshalb keine Fensterpolitik
+entscheiden — ein Guard dort hätte den Gegenwartsfall mitbestraft.
+
+**Das geschrumpfte Fenster bleibt sichtbar.** `adjusted_beta` gibt die tatsächlich benutzten Jahre als
+`DE_Years` heraus. Ohne das ruhte `Beta_Unlevered` unbemerkt auf zwei Jahren statt fünf, und die
+Verschuldungsanpassung ist der Schritt, der bei Boeing am meisten Hebel hat (Schritt 3b).
+
+| Boeing, `as_of = 2026-08-19` | `DE_Years` | Beta |
+|---|---|---|
+| `start_year = 2016` | 2021–2025 | 1,1098 |
+| `start_year = 2023` | 2023–2025 | 1,1361 |
+
+Für alle fünf Firmen bei `start_year = 2016` ist die Schnittmenge vollständig, die Betas stehen
+unverändert und 158 Tests sind grün. Zusammen mit den auf `COMPARATOR_WINDOW` umgestellten
+`Comparator_Source`-Labels ist damit alles geschlossen, was Phase 5 an Code offen hatte. Offen bleibt
+allein die Textentscheidung zu Tesla: 15,71 gegen eine externe Range, deren untere Hälfte nur das
+Autogeschäft meint, ist eine Aussage über den Modellumfang und gehört als Scope-Grenze in die
+Limitations-Sektion von Phase 7, nicht in eine weitere Annahme.
+
+#### Phase 5 — Ergebnis und die Scope-Grenze bei Tesla — DONE
+
+Phase 5 sollte die Modellwerte gegen einen externen Maßstab stellen und Abweichungen über 40% auf eine
+Ursache zurückführen. Beides ist passiert, allerdings mit einem anderen Instrument als geplant: statt
+eines Konsens-Kursziels trägt die extern erhobene Fair-Value-Range den Vergleich, und statt einer
+Fehlersuche im Diskontierungspfad hat der Hebelsolver aus den Schritten 23 bis 26 die Abweichung pro
+Eingang zerlegt.
+
+**Das Ergebnis in einem Satz: der Basisfall ist bei allen fünf Firmen zu niedrig, und bei drei von
+fünf lässt sich das mit plausiblen Eingängen nicht schließen.** `Reachable` steht nach Schritt 26 bei
+Microsoft, P&G und Boeing auf `True`, bei Apple und Tesla auf `False`. Das ist die Aussage, die Phase 5
+liefern sollte, und sie ist erst dadurch belastbar, dass der Comparator die Kante nicht mehr aus einem
+einzelnen Spitzenjahr zieht.
+
+**Tesla ist eine Scope-Grenze, keine Annahmefrage.** 15,71 gegen eine externe Spanne, deren untere
+Hälfte (130–180) ausdrücklich nur das Autogeschäft bewertet, ist Faktor 8 — und der gemeinsame Deckel
+aller fünf Hebel kommt mit 217,01 nicht an den Marktpreis von 342,27 heran. Kein Satz plausibler
+Annahmen schließt das, weil das Modell Energie- und FSD-Geschäft nicht separat abbildet und ein
+Segmentmodell ein anderes Projekt wäre. Die Konsequenz ist, das in Phase 7 als Grenze zu benennen,
+statt weiter nach Annahmen zu suchen, die die Lücke rechnerisch schließen — jede solche Annahme wäre
+Anpassung an den Preis, und genau das soll das Instrument aufdecken.
+
+**Was Phase 5 nicht geleistet hat.** Der externe Anker ist unverifiziert und selbst modellbasiert,
+also kein Konsens im engeren Sinn. Und P&G bleibt der Fall, in dem der Deckel mit 380 gegen eine
+Obergrenze von 175 weit danebenliegt; dort tragen Terminal Growth und WACC-Offset zusammen 325 von 380,
+also die beiden Hebel, deren Comparator nicht aus der Firmenhistorie stammt. Wer den Deckel weiter
+schärfen will, muss dort ansetzen.
 
 ### Phase 4 — Output/interface (2–3 days)
 - Dashboard in Trading Terminal style, or a structured PDF/Excel report
@@ -3256,6 +3448,9 @@ values, missing years, extreme assumptions).
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
   item cleanup, no bank support)
+- Name Tesla as a scope limit, decided in Phase 5: the model covers the auto business only,
+  misses the external low end by a factor of 8, and the joint lever ceiling (217.01) stays
+  below the market price (342.27). Not an assumption to tune.
 
 **Learning goals:** precisely articulate technical limits and assumptions for a
 critical audience (interviewer).

@@ -99,17 +99,19 @@ def debt_to_equity(data: dict, symbol: str, year: int | None, as_of: str) -> flo
     return data[debt_year]["Debt"]["Value"] / market_cap
 
 def adjusted_beta(data: dict, symbol: str, freq: str, n: int, as_of: str) -> dict:
-    value = {"Beta": 0, "Beta_Raw": 0, "Beta_Unlevered": 0, "Beta_Relevered": 0, "DE_Window": 0, "DE_Current": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": ""}
+    value = {"Beta": 0, "Beta_Raw": 0, "Beta_Unlevered": 0, "Beta_Relevered": 0, "DE_Window": 0, "DE_Current": 0, "n": 0, "Correlation": 0, "Std_Error": 0, "Source": "", "DE_Years": []}
     
     raw = raw_beta(symbol, freq, n, as_of)
     years = sorted(set([int(year[0].split("-")[0]) for year in get_prices(symbol, freq, n, as_of) if year[0].split("-")[1] == "12"]))
+    years = [y for y in years if y in data]
+    if len(years) == 0: raise ValueError(f"No valid entries for {symbol}.")
     de_window = stats.mean([debt_to_equity(data, symbol, year, as_of) for year in years])
     de_current = debt_to_equity(data, symbol, None, as_of)
     beta_u = raw["Beta"] / (1 + (1 - MARGINAL_TAX_RATE) * de_window)
     beta_rel = beta_u * (1 + (1 - MARGINAL_TAX_RATE) * de_current)
     beta_adj = 0.67 * beta_rel + 0.33
     
-    value.update({"Beta": beta_adj, "Beta_Raw": raw["Beta"], "Beta_Unlevered": beta_u, "Beta_Relevered": beta_rel, "DE_Window": de_window, "DE_Current": de_current, "n": raw["n"], "Correlation": raw["Correlation"], "Std_Error": raw["Std_Error"], "Source": raw["Source"]})
+    value.update({"Beta": beta_adj, "Beta_Raw": raw["Beta"], "Beta_Unlevered": beta_u, "Beta_Relevered": beta_rel, "DE_Window": de_window, "DE_Current": de_current, "n": raw["n"], "Correlation": raw["Correlation"], "Std_Error": raw["Std_Error"], "Source": raw["Source"], "DE_Years": years})
     
     return value
 

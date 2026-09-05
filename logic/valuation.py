@@ -1,4 +1,4 @@
-from model import project_fcf, TERMINAL_GROWTH, driver_ratio, growth_rate
+from model import project_fcf, TERMINAL_GROWTH, driver_ratio, growth_rate, COMPARATOR_WINDOW, rolling_means
 from datetime import datetime
 from wacc_calculation import calc_wacc, N_MONTHS
 from database import get_data, get_prices
@@ -166,7 +166,9 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
         elif implicit_roic < w[1]: roic_consistency = "Implicit_ROIC < WACC"
         else: roic_consistency = "Consistent"
 
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{base}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "Capital_Turnover": fcf[max(fcf)]["Capital_Turnover"], "Implicit_ROIC": fcf[max(fcf)]["Implicit_ROIC"], "ROIC_Consistency": roic_consistency, "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"], "Terminal_Growth_Source": tg_source, "Revenue_Growth": revenue_growth, "Revenue_Growth_Source": fcf[min(fcf)]["Growth_Rate_Source"]}
+        growth_source = fcf[min(fcf)]["Growth_Rate_Source"]
+        
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{growth_source}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "Capital_Turnover": fcf[max(fcf)]["Capital_Turnover"], "Implicit_ROIC": fcf[max(fcf)]["Implicit_ROIC"], "ROIC_Consistency": roic_consistency, "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"], "Terminal_Growth_Source": tg_source, "Revenue_Growth": revenue_growth, "Revenue_Growth_Source": growth_source}
         
     return value
 
@@ -355,24 +357,30 @@ def implied_assumptions(symbol: str, start_year: int, years: int, freq: str, n: 
     ceiling = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, terminal_growth = 1.0)["wacc"]["Terminal_Growth"]
     
     data = get_data(symbol, start_year, as_of)
-    max_OI = max([data[i]["OperatingIncome"]["Value"] / data[i]["Revenue"]["Value"] for i in driver_ratio(data, "OperatingIncome")["Years"]])
-    min_NWC = min([data[i]["NWC"]["Value"] / data[i]["Revenue"]["Value"] for i in driver_ratio(data, "NWC")["Years"]])
+    oi_windows = rolling_means([(i, data[i]["OperatingIncome"]["Value"] / data[i]["Revenue"]["Value"]) for i in driver_ratio(data, "OperatingIncome")["Years"]], COMPARATOR_WINDOW)
+    nwc_windows = rolling_means([(i, data[i]["NWC"]["Value"] / data[i]["Revenue"]["Value"]) for i in driver_ratio(data, "NWC")["Years"]], COMPARATOR_WINDOW)
     
     metrics = ASSUMPTIONS[symbol]["metrics"]
     nwc_str = metrics["NWC"] if metrics is not None and "NWC" in metrics else "Driver_Ratio"
     base_nwc = driver_ratio(data, "NWC")[nwc_str]
     
-    rates = growth_rate(data)["Rates"]
-    max_growth = max(rates)
-    base_growth = growth_rate(data)[ASSUMPTIONS[symbol]["base"]]
+    growth = growth_rate(data)
+    if growth["Source"] == "Insufficient": raise ValueError(f"{symbol}: revenue growth comparator undefined, n = {growth["n"]}")
+    growth_windows = rolling_means(list(zip(growth["Years"], growth["Rates"])), COMPARATOR_WINDOW)
+    for metric, windows in (("OperatingIncome", oi_windows), ("NWC", nwc_windows), ("Revenue_Growth", growth_windows)):
+        if len(windows) == 0: raise ValueError(f"{symbol}: no contiguous {COMPARATOR_WINDOW}-year window for {metric}")
+    max_OI = max(oi_windows)
+    min_NWC = min(nwc_windows)
+    max_growth = max(growth_windows)
+    base_growth = growth[ASSUMPTIONS[symbol]["base"]]
 
     bases = {"ebit_margin": dcf["wacc"]["EBIT_Margin_Target"], "wacc_offset": 0.0, "terminal_growth": tg, "nwc_intensity": base_nwc, "revenue_growth": base_growth}
     specs = [
-        ("ebit_margin", IMPLIED_MARGIN_BOUNDS[0], IMPLIED_MARGIN_BOUNDS[1], True, max_OI, "Max_Hist_OI_Margin", max_OI),
+        ("ebit_margin", IMPLIED_MARGIN_BOUNDS[0], IMPLIED_MARGIN_BOUNDS[1], True, max_OI, f"Max_Hist_OI_Margin_{COMPARATOR_WINDOW}Y", max_OI),
         ("wacc_offset", -(wacc_low - tg) + IMPLIED_EPS, IMPLIED_WACC_UPPER, False, (wacc_high - wacc_low) / 2, "WACC_CI_Half", -(wacc_high - wacc_low) / 2),
         ("terminal_growth", 0.0, ceiling - IMPLIED_EPS, True, ceiling, "Terminal_Growth_Ceiling", ceiling - IMPLIED_EPS),
-        ("nwc_intensity", IMPLIED_NWC_BOUNDS[0], IMPLIED_NWC_BOUNDS[1], False, min_NWC, "Min_Hist_NWC_Intensity", min_NWC),
-        ("revenue_growth", IMPLIED_GROWTH_BOUNDS[0], IMPLIED_GROWTH_BOUNDS[1], True, max_growth, "Max_Hist_Revenue_Growth", max_growth),
+        ("nwc_intensity", IMPLIED_NWC_BOUNDS[0], IMPLIED_NWC_BOUNDS[1], False, min_NWC, f"Min_Hist_NWC_Intensity_{COMPARATOR_WINDOW}Y", min_NWC),
+        ("revenue_growth", IMPLIED_GROWTH_BOUNDS[0], IMPLIED_GROWTH_BOUNDS[1], True, max_growth, f"Max_Hist_Revenue_Growth_{COMPARATOR_WINDOW}Y", max_growth),
     ]
 
     for name, lo, hi, increasing, comparator, source, override in specs:
