@@ -3565,6 +3565,40 @@ erst zur Aufrufzeit lesen, deshalb erreicht der Patch jeden von ihnen.
 sondern ein Fixture-Drift-Detektor. Das Signal hängt ab jetzt daran, dass jemand `make_fixture.py`
 laufen lässt.
 
+#### Schritt 29 — CI auf GitHub Actions — DONE
+
+Punkte 3 und 4 der Phase-6-Entscheidungen. `.github/workflows/tests.yml` läuft auf `push` und
+`pull_request` gegen `main` plus `workflow_dispatch`, auf `ubuntu-latest`, mit
+`actions/setup-python@v5` auf `python-version: "3.14"` und `cache: "pip"`, dann
+`python -m pip install -r requirements.txt` und `pytest` ohne Argumente. **Erster Lauf grün, 158
+Tests, 1m53s** — schneller als die lokal gemessenen 98 s plus Installation erwarten ließ.
+
+Der Workflow weiß nichts über die Projektstruktur: `pytest.ini` im Root setzt die rootdir,
+`tests/conftest.py` erledigt `sys.path` und die Umleitung. Wissen, das doppelt im YAML und in
+`pytest.ini` stünde, wäre die erste Stelle, die auseinanderdriftet.
+
+**Kein Netzzugriff, nachgemessen statt angenommen.** `get_rate("DGS10", "2026-08-19")` liefert aus der
+Fixture die Zeile vom 2026-08-19 selbst, `age = 0` gegen `RF_MAX_AGE_DAYS = 10`. `risk_free_rate`
+erreicht seinen `fetch_rates`-Zweig damit nie, und `fetch_prices` wird nur aus einem `__main__`-Block
+gerufen. Beide Netzpfade des Projekts sind im Testlauf zu.
+
+**`-m "not slow"` wurde bewusst nicht gesetzt.** Die sieben Monte-Carlo-Tests sind die einzigen, an
+denen ein NumPy-Versionswechsel überhaupt sichtbar würde — `MC_SEED = 12345` ist nur so lange
+deterministisch, wie der RNG-Stream derselbe ist. Der Lauf bestätigt, dass die gepinnte
+`numpy==2.5.2` auf einem Linux-Runner dieselben Ziehungen liefert wie lokal auf Windows.
+
+**Korrektur zu Entscheidung 4.** Die Begründung war falsch: pip liest die UTF-16-Datei anstandslos,
+nachgemessen mit `pip install --dry-run`, weil pip das Encoding über sein vendored
+`charset_normalizer` erkennt. Der echte Grund für die Umstellung ist git — eine Datei mit NUL-Bytes
+in den ersten 8000 Bytes gilt als binär, und jeder Dependency-Bump erschiene als
+`Binary files differ` statt als lesbare Zeile. Gemessen an zwei Kopien mit einer geänderten
+Versionsnummer: UTF-16 `Bin 1238 -> 1238 bytes`, UTF-8 `1 insertion(+), 1 deletion(-)`. Die Datei ist
+jetzt UTF-8 mit BOM; das BOM ist unschädlich, weil es keine NUL-Bytes enthält.
+
+**Offen bleibt der Rest von Phase 6:** die Formeln in Isolation und die Kantenfälle, in der oben
+notierten Reihenfolge — WACC-Kette, `terminal_value`, die reinen Funktionen in `model.py`,
+`validation.py`, die netzfreien Teile von `parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
