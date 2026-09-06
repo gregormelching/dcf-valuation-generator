@@ -3530,6 +3530,41 @@ Kantenfälle, die die Phase laut Lernziel abdecken soll, konkret: `terminal_valu
 `Source = "Insufficient"`, `roic` bei negativem Eigenkapital (Boeing ist der reale Fall),
 `cost_of_debt` bei Schuldenstand null, `synthetic_rating` genau auf den Spread-Grenzen.
 
+#### Schritt 28 — die Fixture-Datenbank steht — DONE
+
+Punkt 1 der vier Phase-6-Entscheidungen, umgesetzt wie beschlossen. `tests/make_fixture.py` kopiert
+`storage/values.db`, leert `raw_downloads`, schneidet `rates` bei `RATES_FROM = "2015-01-01"` ab,
+ruft `VACUUM` nach dem Commit und druckt einen Report aus Dateigröße, `count(*)` je Tabelle und
+`min(date)`/`max(date)` aus `rates`. Ergebnis: **724.992 Bytes**, data 1876, flags 1031, prices 2700,
+rates 2918, raw_downloads 0, Zinsreihe von 2015-01-02 bis 2026-09-01.
+
+`tests/conftest.py` leitet über eine autouse-Session-Fixture mit `pytest.MonkeyPatch.context()` das
+Modulglobal `database.database` auf `tests/fixtures/values.db` um. `.gitignore` bekommt
+`!tests/fixtures/values.db` als Negation zu `*.db`; `git status` führt die Datei als untracked, die
+Negation greift also. `logic/` blieb unangetastet.
+
+**`scope="session"` ist Korrektheit, nicht Optimierung.** `test_golden_values.py` baut seine
+`result`-Fixture module-scoped. pytest richtet Fixtures von der weitesten Scope nach innen ein, eine
+session-scoped Fixture ist damit garantiert vor jeder module-scoped fertig. Mit `scope="function"`
+liefe die Umleitung nach dem ersten `dcf_value`-Aufruf — die Suite wäre grün, aber gegen
+`storage/values.db` gerechnet.
+
+**Der Guard existiert, weil `sqlite3.connect` bei fehlender Datei nicht scheitert, sondern eine leere
+Datenbank anlegt.** Ohne ihn stirbt die Suite mit `no such table: data`, was nach kaputtem Schema
+aussieht statt nach fehlender Fixture, und hinterlässt eine leere `values.db`, die den nächsten Lauf
+durchwinkt.
+
+**Grün beweist die Umleitung nicht, und das ist der wichtige Punkt.** Beide Datenbanken tragen
+denselben Inhalt, die 158 Tests wären auch dann grün, wenn `mp.setattr` ins Leere liefe. Nachgewiesen
+wurde es separat über einen `pytest_runtest_call`-Hook, der `database.database` zur Testlaufzeit
+ausliest: er zeigt `testsixturesalues.db`. Zweite Absicherung: kein Modul macht
+`from database import database` — alle vier Consumer importieren nur Funktionen, die das Modulglobal
+erst zur Aufrufzeit lesen, deshalb erreicht der Patch jeden von ihnen.
+
+**Was damit verloren geht, wie angekündigt:** `test_data_filed` ist kein Re-Ingest-Kanarienvogel mehr,
+sondern ein Fixture-Drift-Detektor. Das Signal hängt ab jetzt daran, dass jemand `make_fixture.py`
+laufen lässt.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
