@@ -3444,6 +3444,92 @@ systematically trace discrepancies to root causes.
 **Learning goals:** test financial formulas in isolation; design edge cases (negative
 values, missing years, extreme assumptions).
 
+#### Phase 6 — die vier Entscheidungen vorab
+
+Phase 6 stand mit vier offenen Punkten aus den Schritten 9, 12 und 26 in der Warteschlange. Alle vier
+sind hier entschieden, bevor die erste Zeile Testcode entsteht, weil drei davon die Bedeutung von
+`as_of` oder die Aussagekraft der gesamten Suite betreffen und nachträglich nicht mehr billig zu
+drehen sind.
+
+**1. Die Fixture-Datenbank wird eingecheckt, nicht `skipif`.** Alle 158 Tests hängen an
+`storage/values.db`, die gitignored ist. Ein `skipif` auf die Existenz der Datei liefert in Actions
+ein grünes Badge, unter dem 158 Tests geskippt sind — CI, die nichts prüft, ist schlechter als keine
+CI, weil sie Vertrauen erzeugt, das sie nicht deckt. Gemessen: die echte Datenbank ist 17,6 MB, davon
+entfällt fast alles auf `raw_downloads` (86 Zeilen mit vollständigen CSV-Bodies, die nur geschrieben
+und nie gelesen werden). Ohne diese Tabelle und mit `rates` ab 2015-01-01 bleiben **708 KB** — eine
+Größe, die in Git gehört. Verifiziert: 158 Tests grün gegen die getrimmte Kopie, 98 s.
+
+Umgeleitet wird über `monkeypatch.setattr(database, "database", ...)` in einer autouse-Session-Fixture
+in `tests/conftest.py`. `get_data`, `get_rate` und `get_prices` lesen das Modulglobal `database` erst
+zur Aufrufzeit, deshalb greift das Repointing ohne eine einzige Änderung in `logic/`. Eine
+Umgebungsvariable in `database.py` wäre die Alternative gewesen und wurde verworfen: sie verlegt
+Testkonfiguration in den Produktionspfad, für einen Effekt, den die Fixture bereits hat.
+
+**Der Preis, ausdrücklich benannt: `test_data_filed` verliert seine Rolle als Kanarienvogel.** Der
+Test war in Schritt 9 genau dafür gebaut, einen Re-Ingest sichtbar zu machen (Boeing 80,54 auf 79,82).
+Gegen eine eingefrorene Fixture kann er das nicht mehr — er wird tautologisch. Das Signal wandert
+damit aus der Suite in das Regenerierungsskript: Fixture neu erzeugen, Goldens laufen lassen, und was
+sich bewegt, ist die Datenbasis. Das ist ein echter Verlust an Automatik und kein Nebeneffekt, den man
+wegdefinieren sollte.
+
+**2. Der risikofreie Zins wird eingefroren, `as_of` bleibt unangetastet.** Die in Schritt 12 offene
+Frage war, ob "newest row <= as_of" überlebt oder durch einen exakten Datums-Match mit Staleness-Fehler
+ersetzt wird. Sie erledigt sich mit Entscheidung 1: die Fixture enthält `rates` bis 2026-09-01, bei
+`AS_OF = 2026-08-19` liegt die neueste Zeile innerhalb von `RF_MAX_AGE_DAYS = 10`, `risk_free_rate`
+greift nicht auf FRED zu, und der Lauf ist netzfrei und deterministisch. Der exakte Datums-Match wird
+verworfen: er ändert für jeden Consumer, was `as_of` bedeutet, um ein Problem zu lösen, das die
+Fixture bereits entfernt. Keine Änderung in `prices.py`.
+
+**3. CI läuft die volle Suite, nichts wird per Marker abgewählt.** ubuntu-latest, Python 3.14 (die
+lokale venv ist 3.14.6), `pip install -r requirements.txt`, `pytest`. Die sieben `@pytest.mark.slow`
+markierten Monte-Carlo-Tests bleiben drin: der gesamte Lauf dauert rund 100 s, und gerade der Monte
+Carlo mit `MC_SEED = 12345` ist der Teil, dessen Determinismus man in einer fremden Umgebung sehen
+will. Ein `-m "not slow"` in CI würde die einzige Stelle abwählen, an der eine abweichende
+NumPy-Version auffiele.
+
+**4. `requirements.txt` wird als UTF-8 neu geschrieben.** Die Datei ist UTF-16 LE mit BOM, entstanden
+aus `pip freeze >` in PowerShell, und ein Kandidat für `Invalid requirement` beim ersten Lauf in
+Actions. 34 gepinnte Pakete, davon nur `colorama` mit Windows-Beigeschmack — das installiert unter
+Linux sauber, die Liste bleibt inhaltlich unverändert.
+
+**Korrektur zu Schritt 26.** Dort steht, die Kante bei `max_OI` und `min_NWC` bleibe bei n = 1 oder 2
+ungeschützt. Das ist seit Schritt 27 nicht mehr richtig: `valuation.py` → `implied_assumptions` prüft
+in der Schleife über `(("OperatingIncome", oi_windows), ("NWC", nwc_windows), ("Revenue_Growth",
+growth_windows))` auf `len(windows) == 0` und wirft mit Symbol und Metrik. Ein zu kurzes Fenster kann
+dort keinen Comparator aus einem einzelnen Jahr mehr liefern. Der Punkt ist erledigt und geht nicht als
+Phase-6-Aufgabe weiter.
+
+#### Phase 6 — was an Tests fehlt, nach Kosten eines stillen Fehlers geordnet
+
+Die 158 bestehenden Tests sind ganz überwiegend end-to-end über `dcf_value`-Fixtures. Sie halten das
+Ergebnis fest, nicht die Formel: sie sagen, dass sich 132,93 nicht unbemerkt bewegt hat, aber nicht,
+dass 132,93 aus der richtigen Rechnung stammt. Das ist die Lücke, die Phase 6 schließt.
+
+- **`wacc_calculation.py` → `calc_wacc`, `cost_of_equity`, `adjusted_beta`, `cost_of_debt`,
+  `synthetic_rating`.** Keine dieser Funktionen hat einen handgerechneten Fall. Der Diskontsatz geht
+  in jede Zahl des Modells ein und in den Terminalblock quadratisch; ein Vorzeichen- oder
+  Klammerfehler hier bewegt alle fünf Firmen gleichgerichtet und sieht deshalb nach einer
+  Modellaussage aus statt nach einem Bug. Höchste Priorität.
+- **`valuation.py` → `terminal_value`.** Bisher nur indirekt über `TV_Share` gedeckt. Der Kantenfall
+  ist `g >= wacc`: die Gordon-Formel liefert dann einen negativen oder explodierenden Wert, und der
+  läuft ohne Guard bis ins `Value_Per_Share` durch. Genau diese Grenze pinnt Schritt 24 als
+  `Terminal_Growth_Ceiling` — die Funktion selbst muss sie ebenfalls kennen.
+- **`model.py` → `project_revenue`, `project_fcf`, `effective_tax_rate`, `driver_ratio`,
+  `growth_rate`, `rolling_means`, `roic`.** Reine Funktionen auf Dicts, billig isoliert zu testen.
+  `project_fcf` ist die Fehlerklasse aus Schritt 4d (eine Zeile eine Ebene zu tief, Boeing 48,01 auf
+  -29,90). `rolling_means` ist aus Schritt 27 neu und trägt seit Schritt 26 alle Comparator-Fenster.
+- **`validation.py` → `validate_values`, `reconcile_working_capital`, `check_recon_tolerance`.**
+  Vollständig ungetestet, und das ist die Schicht, die entscheidet, welche Zahlen überhaupt ins Modell
+  kommen. Ein zu lascher Flag lässt einen Ausreißer durch, ein zu scharfer wirft ein gültiges Jahr weg
+  — beides ohne Spur im Ergebnis.
+- **`parser.py` → `clean_values`, `get_last_n_years`, die Selektoren.** Nur die netzfreien Teile.
+  `get_response` und `get_values` gehen gegen SEC EDGAR und gehören nicht in CI.
+
+Kantenfälle, die die Phase laut Lernziel abdecken soll, konkret: `terminal_value` bei `g >= wacc`,
+`project_fcf` mit einer Lücke mitten in der Jahresreihe, `growth_rate` unter `MIN_YEARS = 3` mit
+`Source = "Insufficient"`, `roic` bei negativem Eigenkapital (Boeing ist der reale Fall),
+`cost_of_debt` bei Schuldenstand null, `synthetic_rating` genau auf den Spread-Grenzen.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
