@@ -3599,6 +3599,60 @@ jetzt UTF-8 mit BOM; das BOM ist unschädlich, weil es keine NUL-Bytes enthält.
 notierten Reihenfolge — WACC-Kette, `terminal_value`, die reinen Funktionen in `model.py`,
 `validation.py`, die netzfreien Teile von `parser.py`.
 
+#### Schritt 30 — die WACC-Kette in Isolation — DONE
+
+Erster der fünf Testblöcke aus der Phase-6-Liste. `tests/test_wacc.py`, 43 Tests, Suite jetzt bei
+**201 grün in 95 s**. Getestet werden `synthetic_rating`, `cost_of_debt`, `synthetic_cost_of_debt`,
+`debt_to_equity`, `adjusted_beta`, `cost_of_equity` und `calc_wacc` einzeln, gegen die Fixture bei
+`AS_OF = "2026-08-19"` und `Risk_Free_Rate = 0.0465`.
+
+**Handgebaute Dicts statt neuer Fixture-Zeilen.** Ein Helper `make_year` erzeugt Jahres-Dicts der
+Form `{"Value": x, "Flag": []}`. Damit sind die Zweige erreichbar, die im echten Datensatz nicht
+vorkommen: `synthetic_cost_of_debt` mit `Source = "Unavailable"`, `cost_of_debt` bei Schuldenstand
+null, der Flag-Filter, und die beiden `calc_wacc`-Zweige. Neue Fixture-Zeilen wären die Alternative
+gewesen und sind verworfen: sie würden alle bestehenden Golden Values verschieben, für Fälle, die
+mit fünf Zeilen Testcode zu haben sind. Für die beiden `calc_wacc`-Zweige wird stattdessen eine
+`deepcopy` der echten Apple-Daten punktuell verbogen, damit Preise und Beta real bleiben.
+
+**Fund: die Spread-Tabelle hat vierzehn Lücken.** Jedes Band in `SPREADS` endet auf `...999`, das
+nächste beginnt eine Dezimalstelle höher, dazwischen liegt ein Intervall ohne Eintrag. Gemessen:
+`synthetic_rating(2.499995)` wirft `ValueError: Coverage ratio ... outside the spread table`. Die
+breiteste Lücke liegt zwischen `2.49999` und `2.5`, also unmittelbar unter `INVESTMENT_GRADE` — genau
+der Schwelle, über die `calc_wacc` seinen Floor legt. Ein Coverage-Ratio, das dort landet, sieht im
+Traceback nach kaputten Daten aus, obwohl die Tabelle das Problem ist. `test_synthetic_rating_gaps`
+pinnt den Zustand als Fund, nicht als Spezifikation; die Entscheidung, ob die Bänder auf
+`high = next_low` umgestellt werden, ist offen.
+
+**Der `outlier`-Carve-out ist derzeit wirkungslos.** `cost_of_debt` entfernt den Flag `outlier`, wenn
+`OUTLIER_RULES` für die Position auf `"yoy"` steht — und für `InterestExpense` wie für `Debt` steht
+sie das. Die Bedingung ist damit immer wahr. Der Test parametrisiert deshalb über zwei Flags
+(`outlier` → `Calculated`, `missing` → `Insufficient`); ein Test nur auf `outlier` hätte die
+Filterung überhaupt nicht geprüft.
+
+**Zwei Invarianten statt Golden Values, wo es geht.** `adjusted_beta` entlevert über `DE_Window` und
+relevert über `DE_Current`; mit einem monkeypatch auf das Modulglobal `wacc_calculation.debt_to_equity`,
+der beide gleich macht, muss `Beta_Relevered == Beta_Raw` gelten. Das fängt ein vertauschtes
+Zähler-Nenner-Paar, das eine Golden-Zahl nur als Bewegung melden würde. Ebenso in `calc_wacc`:
+Gewichte summieren sich auf 1, und `WACC_Low <= WACC <= WACC_High`. `cost_of_equity` läuft ganz ohne
+Datenbank, weil beide Argumente Dicts sind.
+
+**Was die Zweigabdeckung über die Daten sagt.** Boeing ist die einzige Firma unter
+`INVESTMENT_GRADE` und damit die einzige, die den `IG_Floor`-Zweig real erreicht: realisierter Satz
+`0.04728184827492066`, Floor `0.0465 + 0.0111 = 0.0576`, Floor gewinnt. Apple ist der einzige Fall,
+in dem `COD_Alternative` über den Rückfall auf `COD_FALLBACK_START_YEAR` entsteht, weil
+`InterestExpense` in 2024 und 2025 den Flag `missing` trägt und ab 2023 nur ein Jahr übrig bleibt.
+Derselbe Flag drückt Apples Coverage-Jahr auf 2023, obwohl Daten bis 2025 vorliegen —
+`synthetic_cost_of_debt` nimmt `max(candidates)`, nicht `max(data)`, und das ist jetzt über den
+`Year`-Key gepinnt.
+
+**Nebenbefund, nicht behoben:** ein schuldenfreies Unternehmen ist im Modell nicht darstellbar.
+`cost_of_debt` überspringt Jahre mit `Debt in (None, 0)` und landet bei `Insufficient`, und
+`debt_to_equity` wirft bei denselben Werten hart. Das ist eine Scope-Grenze wie der Bankenausschluss,
+keine Lücke im Code; der Test pinnt den `ValueError` als beabsichtigt.
+
+**Offen bleibt der Rest von Phase 6:** `terminal_value` mit der Kante `g >= wacc`, die reinen
+Funktionen in `model.py`, `validation.py` vollständig, und die netzfreien Teile von `parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
