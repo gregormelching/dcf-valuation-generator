@@ -3706,6 +3706,76 @@ Verdrahtung.
 **Offen bleibt der Rest von Phase 6:** die reinen Funktionen in `model.py`, `validation.py`
 vollständig, und die netzfreien Teile von `parser.py`.
 
+#### Schritt 32 — die Messfunktionen in `model.py` — DONE
+
+Dritter der fünf Testblöcke, und davon der erste von drei Teilen. `tests/test_model.py`, 46 Tests,
+Suite jetzt bei **257 grün in 89 s**. Abgedeckt sind `effective_tax_rate`, `driver_ratio`,
+`rolling_means` und `growth_rate` — die vier Funktionen, aus denen `project_fcf` jede Zahl seiner
+Projektion zieht. Offen bleiben aus dem Block `project_revenue` und `roic` (Teil 2) sowie
+`project_fcf` selbst (Teil 3).
+
+**Der Schnitt ist nach Abhängigkeit gelegt, nicht nach Umfang.** Die vier hier getesteten Funktionen
+nehmen ein Dict und geben ein Dict zurück, ohne Symbol, ohne `as_of`, ohne Preise; `rolling_means`
+braucht nicht einmal die Datenbank. Alles darüber ruft sie auf. Damit liegt ein Fehler in Teil 3
+danach nachweislich in Teil 3 und nicht in einem der Eingänge — die Reihenfolge ist der eigentliche
+Nutzen des Blocks.
+
+**`==` statt `pytest.approx`, anders als in den beiden vorigen Dateien.** `effective_tax_rate`,
+`driver_ratio` und `growth_rate` geben `round(..., 4)` zurück; das Literal `0.0356` parst auf
+denselben Double. Eine Toleranz vorzugeben, die die Funktion nicht hat, würde eine geänderte
+Rundungsstelle durchwinken. `rolling_means` gibt ungerundet zurück und wird deshalb als einzige mit
+`approx(rel = 1e-9)` geprüft.
+
+**`Years` steht in jedem `driver_ratio`-Assert.** Ohne diesen Key ist ein Test grün, der die richtige
+Zahl aus den falschen Jahren zieht. Boeing ist der Beleg: `OperatingIncome` läuft über
+`[2016, 2017, 2018, 2022, 2023]` — fünf Einträge über einen Achtjahreszeitraum, weil 2019 bis 2021
+und 2024 bis 2025 den Flag `outlier` tragen. Die Golden-Tabelle führt deshalb alle vier Metriken für
+Apple als Formprobe und `OperatingIncome` für alle fünf Firmen, weil nur dort der Flag-Filter real
+Jahre entfernt.
+
+**Fund: `Mean_Last_Three` mittelt die letzten drei sauberen Einträge, nicht die letzten drei Jahre.**
+Gemessen bei Boeing `OperatingIncome`: `0.0186` aus 2018, 2022 und 2023 — ein Fünfjahresfenster unter
+dem Namen "Last_Three". `rolling_means` prüft Kontiguität ausdrücklich über
+`w[-1][0] - w[0][0] != k - 1`, `driver_ratio` mit demselben `[-3:]`-Slice nicht. Das kollidiert mit
+der Projektkonvention, dass eine Kennzahl nur zusammen mit ihrem Fenster definiert ist. Gepinnt, nicht
+behoben — `Mean_Last_Three` ist der `margin_base` von Apple, eine Änderung verschiebt die Golden
+Values.
+
+**Fund: `effective_tax_rate` prüft nur den Flag auf `Tax`, nicht den auf `PretaxIncome`**
+(`model.py:18`). `test_effective_tax_rate_pretax_flag_ignored_unguarded` belegt es an drei Jahren mit
+`outlier` auf `PretaxIncome`: die Funktion liefert `Source = "Median"` über alle drei. In den echten
+Daten ist das heute folgenlos — Boeing 2025 ist der einzige Fall, und Boeing scheitert ohnehin an
+`MIN_YEARS` und landet bei `Fallback` mit `n = 2`. Genau dieser `Fallback`-Zweig existiert im
+Datensatz nur bei Boeing; fiele es aus der Parametrisierung, wäre er ungetestet.
+
+**Der `outlier`-Carve-out greift hier, anders als in Schritt 30.** `driver_ratio` entfernt den Flag
+nur, wenn `OUTLIER_RULES[metric][0] == "yoy"` ist. Bei `cost_of_debt` war dieselbe Bedingung immer
+wahr und damit wirkungslos; hier läuft die Funktion über Metriken mit verschiedenen Regeln, also
+behält `D&A` (`yoy`) das geflaggte Jahr und `OperatingIncome` (`margin_change_pp`) verliert es. Der
+Test parametrisiert über beide Metriken mal `outlier`/`missing`, sonst wäre nur die eine Hälfte
+geprüft.
+
+**Zwei rohe Exceptions, gepinnt statt behoben.** `effective_tax_rate` wirft bei
+`PretaxIncome = 0.0` einen `ZeroDivisionError` — der Guard in Zeile 18 prüft nur auf `None`.
+`rolling_means` wirft bei `k = 0` einen `IndexError`, weil `pairs[i:i]` leer ist und `w[-1]` daneben
+greift. Dazu eine dritte, stille Kante: `rolling_means` sortiert nicht, die Kontiguitätsprüfung ist
+gerichtet, und unsortierte Paare liefern kommentarlos ein anderes Ergebnis. Alle drei tragen
+`unguarded` im Namen.
+
+**Der Helper heißt `row(flags = None, **values)` und ist bewusst nicht `make_year` aus
+`tests/test_wacc.py`.** `model.py` fasst zehn verschiedene Positionen an (`Tax`, `PretaxIncome`,
+`Revenue`, `D&A`, `CapEx`, `NWC`, `OperatingIncome`, `Debt`, `Cash`, `Equity`); eine feste Signatur
+wie dort wäre eine Zehn-Parameter-Zeile, von der jeder Test zwei benutzt. `test_wacc.py` blieb
+unangetastet — eine grüne Datei für einen gemeinsamen Helper anzufassen, kauft nichts.
+
+**Eine Fixture lädt, die andere parametrisiert.** `all_data` ist module-scoped und lädt die fünf
+Firmen einmal; `data_result` ist darüber parametrisiert und reicht `(symbol, data)` durch. Zwei
+unabhängige Fixtures mit je eigenem `get_data` hätten dieselben fünf Datensätze zweimal geholt, ohne
+dass ein Test davon profitiert.
+
+**Offen bleibt der Rest von Phase 6:** `project_revenue` und `roic`, dann `project_fcf`, danach
+`validation.py` vollständig und die netzfreien Teile von `parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
