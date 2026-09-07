@@ -3653,6 +3653,59 @@ keine Lücke im Code; der Test pinnt den `ValueError` als beabsichtigt.
 **Offen bleibt der Rest von Phase 6:** `terminal_value` mit der Kante `g >= wacc`, die reinen
 Funktionen in `model.py`, `validation.py` vollständig, und die netzfreien Teile von `parser.py`.
 
+#### Schritt 31 — `terminal_value` in Isolation — DONE
+
+Zweiter der fünf Testblöcke. `tests/test_valuation.py`, 10 Tests, Suite jetzt bei **211 grün in
+92 s**. `terminal_value` trägt bei Apple 51,4 Prozent des Unternehmenswerts und war bisher nur
+indirekt über `TV_Share` gedeckt.
+
+**Korrektur zur Phase-6-Liste.** Dort steht, die Gordon-Formel liefere bei `g >= wacc` einen
+negativen oder explodierenden Wert, der ohne Guard bis ins `Value_Per_Share` durchläuft. Das ist
+falsch: `valuation.py:84` wirft `ValueError("WACC must be greater than Terminal Growth.")`, und zwar
+auf `<=`, also auch bei Gleichheit. Nachgemessen, beide Fälle werfen. Der Kantenfall war kein Loch,
+sondern ein ungetesteter Guard; die Aufgabe war Festnageln, nicht Einbauen. Stünde dort `<`, wäre
+`wacc == terminal_growth` eine Division durch null mitten in der Bewertung.
+
+**Die Funktion ist rein und wird auch so getestet.** Neun der zehn Tests laufen gegen handgebaute
+Zeilen-Dicts aus einem Helper `val_dct(fcf, ebit, da)` — keine Datenbank, keine Symbole, kein
+`as_of`. Der Testdatensatz `FCF_ROWS` hat drei Zeilen statt der minimal nötigen zwei, und die
+älteste trägt absichtlich absurde EBIT- und D&A-Werte: `last_explicit` ist `sorted(fcf)[-2]`, und
+mit nur zwei Zeilen wäre das dasselbe wie `[0]` — die Zeilenauswahl wäre ungeprüft. Das Dict-Literal
+ist zusätzlich in verkehrter Jahresreihenfolge notiert, weil die Funktion selbst sortiert.
+
+**`Implied_Multiple` bleibt Gordon-basiert, auch bei `method = "multiple"`.** Gemessen: bei
+`exit_multiple = 8.0` gibt die Funktion `Terminal_Value = 1000.0` zurück, das `Implied_Multiple`
+bleibt aber `11.0` statt `8.0`. Das ist Absicht — die Kennzahl beantwortet, welches Multiple die
+Gordon-Annahme implizit unterstellt, und ist damit der Vergleichsmaßstab für das gesetzte. Ohne Test
+liest das später jemand als vergessene Verzweigung und macht sie tautologisch.
+
+**Zwei ungeschützte Stellen, gepinnt statt behoben.** `Implied_Multiple` teilt durch
+`EBIT + D&A` der vorletzten Zeile, ohne den Nenner zu prüfen. Bei EBITDA gleich null fliegt ein
+`ZeroDivisionError` — und zwar auch bei `method = "multiple"`, weil die Division im `return` steht,
+also nach der Methodenverzweigung: die Funktion stirbt an einer Kennzahl, die sie für diese Methode
+nicht braucht. Bei negativem EBITDA kommt ein negatives Multiple heraus, kommentarlos, und wandert
+über `dcf_value` in die Ergebnis-Dicts; Boeing ist der reale Kandidat mit mehreren Jahren negativen
+Operating Income. Beide Tests tragen `unguarded` im Namen, damit sie nicht als Spezifikation gelesen
+werden. **Offene Entscheidung:** Guard oder `Source`-Marker. Die Projektkonvention spräche für einen
+Marker — Abwesenheit soll sichtbar bleiben, und `None` sagt mehr als eine negative Zahl.
+
+**Ein Test gegen echte Daten, als Strukturnachweis.** Eine module-scoped Fixture baut die Kette aus
+`dcf_value` nach — `get_data`, `calc_wacc`, `resolve_assumptions`, `project_fcf` — und der Test prüft
+`sorted(fcf) == list(range(2026, 2037))`, also elf Zeilen bei zehn Projektionsjahren. Genau diese
+Struktur nehmen die neun synthetischen Tests als gegeben an, ohne sie je zu prüfen. Gemessen:
+`Terminal_Value = 2011707660197.802`, `Implied_Multiple = 9.41545108964314` — letzteres identisch mit
+`GOLDEN["apple"]["Implied_Multiple"]`, was die Verdrahtung bestätigt. **Fallstrick dabei:** das
+dritte Argument von `project_fcf` ist der Terminal ROIC aus `ASSUMPTIONS` (Apple: 0,2), nicht der
+WACC — `dcf_value` fällt nur dann auf den WACC zurück, wenn der Eintrag `None` ist. Mit der falschen
+Verdrahtung kommt ein plausibler, aber anderer Terminal Value heraus.
+
+**Was der Test nicht kann:** er baut die Verdrahtung nach, statt sie zu benutzen. Ändert `dcf_value`
+seinen `project_fcf`-Aufruf, läuft er unverändert weiter. Er sichert die Zeilenstruktur ab, nicht die
+Verdrahtung.
+
+**Offen bleibt der Rest von Phase 6:** die reinen Funktionen in `model.py`, `validation.py`
+vollständig, und die netzfreien Teile von `parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
