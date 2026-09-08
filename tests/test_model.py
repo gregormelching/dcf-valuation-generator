@@ -1,10 +1,12 @@
+import copy
 import pytest
 from database import get_data
 from model import (
     MARGINAL_TAX_RATE, MIN_YEARS, TAX_WINDOW_START, TERMINAL_GROWTH,
-    effective_tax_rate, driver_ratio, rolling_means, growth_rate, project_revenue, roic
+    effective_tax_rate, driver_ratio, rolling_means, growth_rate, project_revenue, roic, project_fcf
 )
 
+TERMINAL_ROIC = 0.2
 YEARS = 10
 AS_OF = "2026-08-19"
 START_YEAR = 2016
@@ -46,6 +48,13 @@ REV_GOLDEN = {
     "microsoft":      (2027, 0.134,  376305425999.99994, 709406861343.6075),
     "procter_gamble": (2027, 0.0259, 89286128800.0,      111898351266.13243),
     "tesla":          (2026, 0.2573, 119225987099.99998, 347661701178.7101),
+}
+FCF_GOLDEN = {
+    "apple":          (2026, 118984867042.3343,  118776269439.79715, 121745676175.79207),
+    "boeing":         (2026, 2786036759.8959374, 6358053410.524411,  6517004745.78752),
+    "microsoft":      (2027, 125285852074.45753, 194040511749.01025, 198891524542.73547),
+    "procter_gamble": (2027, 15168647077.421728, 16236101086.368109, 16642003613.52731),
+    "tesla":          (2026, -619219475.9234953, 14419269056.387003, 14779750782.796675),
 }
 ROIC_BASE = {"Tax": 25.0, "PretaxIncome": 100.0, "Debt": 400.0, "Cash": 100.0,
              "Equity": 700.0, "OperatingIncome": 100.0}
@@ -271,3 +280,102 @@ def test_proj_rev_raises(all_data, short, base, revenue_growth, message):
 
 def test_proj_rev_zero_years_unguarded(all_data):
     assert project_revenue(all_data["apple"], 0) == {}
+
+def test_fcf_golden(data_result):
+    symbol, data = data_result
+    first_year, fcf_first, fcf_last_explicit, fcf_tv = FCF_GOLDEN[symbol]
+    out = project_fcf(data, YEARS, TERMINAL_ROIC)
+    years = sorted(out)
+
+    assert (len(out), years[0]) == (YEARS + 1, first_year)
+    assert out[years[0]]["FCF"] == pytest.approx(fcf_first, rel = REL)
+    assert out[years[-2]]["FCF"] == pytest.approx(fcf_last_explicit, rel = REL)
+    assert out[years[-1]]["FCF"] == pytest.approx(fcf_tv, rel = REL)
+
+@pytest.mark.parametrize("key, expected", [
+    ("Revenue",           440797731199.99994),
+    ("EBIT",              139533286635.872),
+    ("NOPAT",             116228437101.94867),
+    ("D&A",               15692399230.719997),
+    ("CapEx",             13400251028.479998),
+    ("dNWC",              -2384835580.159994),
+    ("FCF",               118984867042.3343),
+    ("EBIT_Margin",       0.31654719786332697),
+    ("Tax_Rate",          0.16702),
+    ("Reinvestment",      -2756429940.3856363),
+    ("Reinvestment_Rate", -0.02371562424063106),
+])
+def test_fcf_first_row(all_data, key, expected):
+    out = project_fcf(all_data["apple"], YEARS, TERMINAL_ROIC)
+
+    assert out[2026][key] == pytest.approx(expected, rel = REL)
+
+def test_fcf_terminal_row(all_data):
+    out = project_fcf(all_data["apple"], YEARS, TERMINAL_ROIC)
+    tv = out[sorted(out)[-1]]
+
+    assert tv["Flag"] == "TV"
+    assert (tv["D&A"], tv["CapEx"], tv["dNWC"]) == (None, None, None)
+    assert (tv["Tax_Rate"], tv["Terminal_ROIC"]) == (MARGINAL_TAX_RATE, TERMINAL_ROIC)
+    assert tv["Implicit_ROIC"] == pytest.approx(1.2774720191730067, rel = REL)
+    assert tv["Capital_Turnover"] == pytest.approx(5.912169474363099, rel = REL)
+
+def test_fcf_reinvestment_weight(data_result):
+    symbol, data = data_result
+    out = project_fcf(data, YEARS, TERMINAL_ROIC)
+    years = sorted(out)
+
+    assert out[years[-2]]["Reinvestment_Rate"] == pytest.approx(TERMINAL_GROWTH / TERMINAL_ROIC, rel = REL)
+    assert out[years[-1]]["Reinvestment_Rate"] == pytest.approx(TERMINAL_GROWTH / TERMINAL_ROIC, rel = REL)
+
+def test_fcf_margin_start_source(data_result):
+    symbol, data = data_result
+    expected = "Last_Actual_Flagged" if symbol == "boeing" else "Last_Actual"
+    out = project_fcf(data, YEARS, TERMINAL_ROIC)
+
+    assert out[sorted(out)[0]]["Margin_Start_Source"] == expected
+
+@pytest.mark.parametrize("kwargs, fcf, metrics, margin_base", [
+    ({},                                    118984867042.3343,  "Driver_Ratio+Driver_Ratio+Driver_Ratio",          "Driver_Ratio"),
+    ({"margin_base": "Last"},               120130928778.59999, "Driver_Ratio+Driver_Ratio+Driver_Ratio",          "Last"),
+    ({"margin_base": "Mean_Last_Three"},    119815188977.65878, "Driver_Ratio+Driver_Ratio+Driver_Ratio",          "Mean_Last_Three"),
+    ({"metrics": {"D&A": "Mean_Last_Three", "CapEx": "Mean_Last_Three", "NWC": "Mean_Last_Three"}},
+                                            117246978706.3343,  "Mean_Last_Three+Mean_Last_Three+Mean_Last_Three", "Driver_Ratio"),
+    ({"ebit_margin": 0.35},                 121229274369.69609, "Driver_Ratio+Driver_Ratio+Driver_Ratio",          "Override"),
+    ({"nwc_intensity": 0.1},                114621209212.19032, "Driver_Ratio+Driver_Ratio+Override",              "Driver_Ratio"),
+    ({"revenue_growth": 0.05},              117270065761.80252, "Driver_Ratio+Driver_Ratio+Driver_Ratio",          "Driver_Ratio"),
+], ids = ["default", "margin_last", "margin_mean_last_three", "metrics_mean_last_three",
+          "ebit_margin_override", "nwc_override", "revenue_growth_override"])
+def test_fcf_variants(all_data, kwargs, fcf, metrics, margin_base):
+    out = project_fcf(all_data["apple"], YEARS, TERMINAL_ROIC, **kwargs)
+
+    assert out[2026]["FCF"] == pytest.approx(fcf, rel = REL)
+    assert (out[2026]["Metrics"], out[2026]["Margin_Base"]) == (metrics, margin_base)
+
+@pytest.mark.parametrize("mutation, terminal_roic, kwargs, message", [
+    (None, TERMINAL_ROIC, {"margin_base": "Bogus"},                  "Unknown margin_base: Bogus"),
+    (None, TERMINAL_ROIC, {"metrics": {"Bogus": "Driver_Ratio"}},    r"Unkown metric: \['Bogus'\]"),
+    (None, TERMINAL_ROIC, {"metrics": {"D&A": "Bogus"}},             r"Unkown metric: \[\]"),
+    (None, 0.025,         {},                                        "Terminal ROIC must be greater than terminal growth"),
+    (None, 0.02,          {},                                        "Terminal ROIC must be greater than terminal growth"),
+    (None, TERMINAL_ROIC, {"ebit_margin": "x"},                      "Ebit Margin must be a number or float"),
+    (None, TERMINAL_ROIC, {"nwc_intensity": "x"},                    "Invalid type for NWC intensity"),
+    (("OperatingIncome", None), TERMINAL_ROIC, {},                   "Operating Income from 2025 is None."),
+    (("Revenue", 0.0),          TERMINAL_ROIC, {},                   "Revenue from 2025 is None or 0."),
+], ids = ["margin_base", "metric_key", "metric_value", "roic_equal", "roic_below",
+          "ebit_margin_type", "nwc_type", "operating_income_none", "revenue_zero"])
+def test_fcf_raises(all_data, mutation, terminal_roic, kwargs, message):
+    data = all_data["apple"]
+    if mutation is not None:
+        metric, value = mutation
+        data = copy.deepcopy(data)
+        data[2025][metric] = {"Value": value, "Flag": []}
+
+    with pytest.raises(ValueError, match = message):
+        project_fcf(data, YEARS, terminal_roic, **kwargs)
+
+def test_fcf_zero_years_unguarded(all_data):
+    out = project_fcf(all_data["apple"], 0, TERMINAL_ROIC)
+
+    assert list(out) == [2026]
+    assert (out[2026]["FCF"], out[2026]["Revenue"]) == (0, 0)

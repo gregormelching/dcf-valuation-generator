@@ -3838,6 +3838,57 @@ der Test hält sie fest.
 **Offen bleibt der Rest von Phase 6:** `project_fcf`, dann `validation.py` vollständig und die
 netzfreien Teile von `parser.py`.
 
+#### Schritt 34 — `project_fcf` in Isolation — DONE
+
+Dritter Teil und Abschluss des dritten Testblocks. `tests/test_model.py` steht bei 119 Tests, Suite
+bei **330 grün in 88 s**. Damit ist `model.py` vollständig abgedeckt; offen bleiben von Phase 6
+`validation.py` und die netzfreien Teile von `parser.py`.
+
+**Der Grund für den Block war Schritt 4d** — eine Zeile eine Ebene zu tief, Boeing von 48,01 auf
+-29,90, ein Vorzeichenwechsel, der nur durch manuelles Nachrechnen aufgefallen ist. Die Funktion
+läuft jetzt gegen fünf Firmen mit `terminal_roic = 0.2`, `years = 10` und sonst Defaults.
+
+**Der zentrale Fund: die letzte explizite Zeile ist blind für alle drei Treiber.** `net_reinvest`
+mischt `capex + dnwc - da` und `reinvestment_rate * nopat` über `w = i / len(projected_years)`. Bei
+`i == years` ist `w = 1`, der erste Term fällt vollständig heraus, und die letzte explizite Zeile
+hängt nur noch an NOPAT und der Terminal-Reinvestitionsrate. Gemessen: `nwc_intensity = 0.1` und
+`metrics` komplett auf `Mean_Last_Three` verändern den FCF dieser Zeile um exakt null, den des ersten
+Projektionsjahres dagegen um 4,4 respektive 1,5 Mrd. Ein Golden nur auf der letzten Zeile — die
+naheliegende Wahl, weil sie an den Terminalblock grenzt — hätte den gesamten Treiberpfad ungetestet
+gelassen. `FCF_GOLDEN` führt deshalb erste Zeile, letzte explizite Zeile und TV-Zeile.
+
+**Die Gegenprobe dazu als Invariante:** `Reinvestment_Rate` der letzten expliziten Zeile ist exakt
+`TERMINAL_GROWTH / TERMINAL_ROIC`, also 0,125, und identisch mit der der TV-Zeile. Das hält fest,
+dass der Übergang am Ende ankommt, ohne eine weitere Golden-Zahl zu kosten.
+
+**Die erste Projektionszeile ist als eigener Test über elf Keys parametrisiert** — `Revenue`, `EBIT`,
+`NOPAT`, `D&A`, `CapEx`, `dNWC`, `FCF`, `EBIT_Margin`, `Tax_Rate`, `Reinvestment`,
+`Reinvestment_Rate`. Ein Assert pro Key statt eines Tupels, damit bei einem Fehler der Name der
+kaputten Position im Report steht und nicht ein elfstelliges Tupel.
+
+**Boeing ist der einzige `Last_Actual_Flagged`-Fall.** Sein `OperatingIncome` trägt 2025 den Flag
+`outlier`, die anderen vier starten den Margin-Fade auf `Last_Actual`. Der Zweig setzt nur ein Label
+und beeinflusst keine Zahl — genau deshalb würde er sonst nie auffallen.
+
+**Fund: die Fehlermeldung für eine ungültige Metrik nennt nichts.** `metrics = {"D&A": "Bogus"}`
+wirft `ValueError: Unkown metric: []` — die Prüfung im `any(...)` deckt Keys und Values ab, die
+Liste in der Meldung filtert aber nur über die Keys. Ein falscher Wert erzeugt damit eine leere
+Liste. Dazu der Tippfehler "Unkown". Beides so gepinnt, wie es ist; ein Fix an der Meldung wäre
+Kosmetik in `logic/` und gehört in die gesammelte Liste am Ende der Phase.
+
+**`years = 0` gibt eine einzelne Nullzeile zurück**, keine TV-Zeile und kein `raise`, weil `value`
+über `range(last_year + 1, last_year + 2 + years)` vorbelegt wird und die Schleife nie läuft. Wie bei
+`project_revenue` mit `unguarded` im Namen gepinnt.
+
+**Die neun `raise`-Pfade laufen über eine Tabelle mit optionaler Mutation.** Sieben kommen über
+Argumente, zwei brauchen verbogene Daten (`OperatingIncome` auf `None`, `Revenue` auf `0.0` im
+letzten Ist-Jahr) und arbeiten deshalb auf einer `deepcopy` der echten Apple-Daten — dasselbe Muster
+wie bei den beiden `calc_wacc`-Zweigen aus Schritt 30. Die beiden Metrik-Meldungen brauchen im
+`match` escapte eckige Klammern, weil `pytest.raises` einen Regex erwartet.
+
+**Offen bleibt der Rest von Phase 6:** `validation.py` vollständig und die netzfreien Teile von
+`parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
