@@ -3889,6 +3889,133 @@ wie bei den beiden `calc_wacc`-Zweigen aus Schritt 30. Die beiden Metrik-Meldung
 **Offen bleibt der Rest von Phase 6:** `validation.py` vollständig und die netzfreien Teile von
 `parser.py`.
 
+#### Schritt 35 — `validation.py` in Isolation — DONE
+
+Vierter der fünf Testblöcke. `tests/test_validation.py`, 31 Tests, Suite bei **361 grün**. Die
+Schicht war vollständig ungetestet und entscheidet, welche Zahlen überhaupt ins Modell kommen.
+
+**Die Datei rührt die Fixture-Datenbank nicht an, und das ist der Kern.** `validate_values` liest die
+Parser-Form, in der Abwesenheit das Fehlen des Keys `Value` ist — `get_data` setzt stattdessen
+`Value: None`. Ein Test gegen die Fixture hätte also nicht nur andere Zahlen geprüft, sondern eine
+Form, die die Funktion nie sieht: `values[year][metric]["Value"] < 0` würde bei `None` mit einem
+`TypeError` sterben. Alle 31 Fälle sind deshalb handgebaut, über eine Modulkonstante `BASE` mit allen
+dreizehn Positionen aus `OUTLIER_RULES` und einen Helper `pyear(missing = (), **over)`.
+
+**Der Basisfall ist so gewählt, dass alle vier Regeln schweigen** — Umsatz in beiden Jahren gleich,
+EBIT-Marge 0,20, Vorsteuermarge 0,18, Steuerquote 0,25, Working Capital bei 2 Prozent des Umsatzes.
+Erst dadurch stammt in jedem der folgenden Fälle jeder Flag von genau der einen geänderten Zahl. Vier
+Fälle sind bewusst Ein-Jahres-Dicts: ohne Vorjahr fällt der gesamte `year-1`-Block weg, und
+`pct_of_revenue` beziehungsweise `effective_rate` stehen isoliert da. Mit zwei Jahren reißt eine
+negative Vorsteuerzahl den `margin_change_pp`-Test auf `PretaxIncome` mit, und der Fall prüft dann
+zwei Regeln gleichzeitig.
+
+**Beide Vergleiche sind strikt, und beide Grenzen sind gepinnt.** Eine Margenänderung von exakt
+0,07 Prozentpunkten und ein Working Capital von exakt 10 Prozent des Umsatzes erzeugen **keinen**
+Flag. Dasselbe bei `check_recon_tolerance`: `Residuum_pct` exakt auf `RECON_TOLERANCE` bleibt ohne
+`recon_gap`.
+
+**Die Flag-Blöcke hängen an, sie konkurrieren nicht.** `CapEx = -60.0` nur im zweiten Jahr liefert
+`['negative', 'outlier']` — der Vorzeichentest und der Yoy-Test laufen beide. Stehen beide Jahre auf
+`-60.0`, bleibt je Jahr nur `['negative']`, weil die Yoy-Änderung null ist. Ein Test, der nur den
+zweiten Fall prüft, hätte die Reihenfolge der Blöcke nicht abgesichert.
+
+**`Tax = -10.0` bekommt `outlier`, aber kein `negative`.** `Tax` steht auf der `exceptions`-Liste,
+zusammen mit `OperatingIncome`, `WorkingCapital`, `PretaxIncome`, `Equity` und `NWC` — bei diesen
+sechs ist ein negativer Wert legitim. Der Fall `OperatingIncome` von 10,0 auf -10,0 zeigt die
+Gegenprobe: Vorzeichenwechsel, Margenänderung 0,02 Prozentpunkte, kein einziger Flag.
+
+**Zwei ungeschützte Stellen in `reconcile_working_capital`, gepinnt.** `residuum_pct` teilt durch den
+Umsatz ohne Prüfung — `Revenue = 0.0` gibt `ZeroDivisionError`. Und die Funktion iteriert über
+`values`, indiziert aber `recon_values[year]`: ein Jahr, das nur in `values` steht, gibt `KeyError`.
+Der zweite Fall ist der realistischere, weil beide Dicts aus getrennten `get_values`-Aufrufen mit
+unterschiedlichen Tag-Mengen stammen.
+
+**`check_recon_tolerance` mutiert `flags` in place und gibt dasselbe Objekt zurück.** Ein eigener Test
+hält das fest (`out is flags`). Wer die Funktion später als rein annimmt und den Rückgabewert
+verwirft, verliert die Flags nicht — er bekommt sie doppelt, wenn er sie zweimal aufruft.
+
+**Offen bleibt von Phase 6:** die netzfreien Teile von `parser.py`.
+
+#### Schritt 36 — die netzfreien Teile von `parser.py` — DONE
+
+Fünfter und letzter Testblock. `tests/test_parser.py`, 24 Tests, Suite bei **385 grün in 91 s**.
+Abgedeckt sind `get_last_n_years`, die sieben Slot-Selektoren und `clean_values`. `get_response` und
+`get_values` bleiben draußen: der eine geht gegen SEC EDGAR, der andere liest eine JSON-Datei aus
+`storage/`, die nicht eingecheckt ist.
+
+**`get_last_n_years(n)` liefert `n + 1` Jahre.** `range(cur_year - n, cur_year + 1)` schließt beide
+Enden ein. Der Test pinnt Länge, letztes Jahr und Lückenlosigkeit; die Länge ist der Punkt, weil der
+Aufrufer `get_values(3, ...)` schreibt und vier Jahre bekommt. Er hängt an `datetime.now()` und wird
+deshalb gegen `datetime.now().year` geprüft statt gegen eine feste Zahl — ein hartes Jahr wäre am
+1. Januar rot.
+
+**Die Selektoren zerfallen in zwei Bauarten, und beide sind getestet.** `select_wc`, `select_cash`
+und `select_nwc_level` sammeln alles, was gefüllt ist. `select_pretax`, `select_deferred_taxes` und
+`select_shares` sind Prioritätsketten mit Alles-oder-nichts-Rückfall: `select_pretax` nimmt den
+direkten Tag, sonst Domestic **und** Foreign, sonst nichts — mit nur einer der beiden Hälften kommt
+`[]` zurück und das Jahr fällt aus. Genau dieser Halb-Fall ist je ein eigener Test, weil er der
+einzige ist, in dem echte Daten still verschwinden.
+
+**`select_debt` ist der einzige Selektor mit einer Sonderregel, und sie hängt am Tag-Namen.**
+`CommercialPaper` bleibt nur, wenn `DebtCurrent` seinen Wert aus dem Tag `LongTermDebtCurrent` zieht
+— steht dort `DebtCurrent`, ist das Commercial Paper darin schon enthalten und wird entfernt. Ist der
+Slot leer, greift `.get("Tag")` auf `None` und die Regel entfernt ebenfalls. Alle drei Zustände sind
+gepinnt.
+
+**`clean_values` schreibt den Aggregatwert in dasselbe Dict, in dem die Slots stehen.** Nach dem Lauf
+trägt `WorkingCapital` sowohl `Receivables`, `Inventory`, `Payables`, `DeferredRevenue` als auch
+`Value`, `Tag`, `End`, `Form`, `Filed`. Der Test prüft beides, weil ein späterer Umbau auf ein
+flaches Ergebnis-Dict die Provenienz der Einzelposten stillschweigend verlöre.
+
+**Die Provenienz-Keys folgen drei verschiedenen Regeln:** `Tag` ist die Verkettung mit `+`, `End` und
+`Filed` sind jeweils das Maximum, `Form` ist `forms[0]` — der Wert des ersten gewählten Slots. Im
+Test steht der zweite Slot bewusst auf `10-Q`, und das Ergebnis meldet trotzdem `10-K`. Real
+unerreichbar, weil `get_values` alles außer `10-K` verwirft; wird dieser Filter je gelockert,
+behauptet die Aggregatzeile eine Form, die nur einer ihrer Bestandteile hat.
+
+**Der `if not chosen: continue`-Pfad ist die Brücke zu `validation.py`.** Ist kein Slot gefüllt,
+bleibt das Metrik-Dict unverändert und ohne Key `Value` — und genau daraus macht `validate_values`
+den Flag `missing`. Derselbe Mechanismus bei den einschlitzigen Metriken: `{"Revenue": {}}` kollabiert
+zu `{}`, nicht zu `{"Value": None}`.
+
+#### Phase 6 — abgeschlossen, und was sie an Entscheidungen hinterlässt
+
+Alle fünf Blöcke stehen: WACC-Kette, `terminal_value`, `model.py` in drei Teilen, `validation.py`,
+`parser.py`. Von 158 Tests zu Beginn der Phase auf **385**, Laufzeit 91 s, CI grün. Die Lücke, die
+die Phase schließen sollte — die bestehenden Tests hielten das Ergebnis fest, nicht die Formel — ist
+zu.
+
+Kein Test hat eine Zeile in `logic/` geändert. Was sie gefunden haben, steht als Liste offener
+Entscheidungen, gesammelt statt einzeln behoben, weil jeder Fix die Golden Values verschiebt und
+mehrfaches Nachziehen teurer ist als ein Durchgang:
+
+1. **`SPREADS` hat vierzehn Lücken** (Schritt 30). Jedes Band endet auf `...999`, das nächste beginnt
+   eine Dezimalstelle höher. Breiteste Lücke direkt unter `INVESTMENT_GRADE`. Option: `high = next_low`.
+2. **`Implied_Multiple` teilt ungeschützt durch EBITDA** (Schritt 31). Null gibt `ZeroDivisionError`
+   auch bei `method = "multiple"`, negativ gibt ein stilles negatives Multiple. Boeing ist der reale
+   Kandidat. Option: Guard oder `Source`-Marker; die Konvention spricht für den Marker.
+3. **`Mean_Last_Three` in `driver_ratio` ist nicht kontingent** (Schritt 32). Boeing mittelt 2018,
+   2022 und 2023 unter dem Namen "letzte drei". Der teuerste Fix, weil `Mean_Last_Three` bei Apple
+   der `margin_base` ist.
+4. **`effective_tax_rate` prüft den Flag auf `PretaxIncome` nicht** (Schritt 32) und wirft bei
+   `PretaxIncome = 0` einen `ZeroDivisionError`.
+5. **`rolling_means` wirft bei `k = 0` einen `IndexError` und sortiert nicht** (Schritt 32).
+6. **`roic`: `Insufficient` ist klebrig** (Schritt 33) — ein Jahr mit `IC <= 0` löscht alle übrigen.
+   `IC_Last` kommt aus `max(data)` statt `max(dct)` und überlebt `Insufficient`. Flags werden nicht
+   geprüft.
+7. **`project_revenue` und `project_fcf` bei `years = 0`** (Schritte 33, 34) geben still ein leeres
+   Dict beziehungsweise eine Nullzeile zurück.
+8. **`Unkown metric: []`** (Schritt 34) — Tippfehler, und bei einem ungültigen Metrik-*Wert* nennt die
+   Meldung nichts.
+9. **`reconcile_working_capital`** (Schritt 35) wirft `ZeroDivisionError` bei Umsatz null und
+   `KeyError`, wenn ein Jahr nur in `values` steht.
+10. **`clean_values` setzt `Form = forms[0]`** (Schritt 36), heute unerreichbar hinter dem
+    `10-K`-Filter in `get_values`.
+
+Reihenfolge für den Durchgang: 2, 6 und 3 zuerst, weil sie Zahlen im Ergebnis bewegen; 1, 4, 5, 7, 8,
+9, 10 danach, weil sie nur Fehlerbilder und Meldungen betreffen. Als Nächstes steht laut
+Phasenreihenfolge Phase 4 an, das Output-Interface.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
