@@ -1,10 +1,11 @@
 import pytest
 from database import get_data
 from model import (
-    MARGINAL_TAX_RATE, MIN_YEARS, TAX_WINDOW_START,
-    effective_tax_rate, driver_ratio, rolling_means, growth_rate,
+    MARGINAL_TAX_RATE, MIN_YEARS, TAX_WINDOW_START, TERMINAL_GROWTH,
+    effective_tax_rate, driver_ratio, rolling_means, growth_rate, project_revenue, roic
 )
 
+YEARS = 10
 AS_OF = "2026-08-19"
 START_YEAR = 2016
 REL = 1e-9
@@ -33,6 +34,21 @@ DRIVER_GOLDEN = {
     ("procter_gamble", "OperatingIncome"):  (0.2211,  0.2301,  9, [2016, 2017, 2018, 2021, 2022, 2023, 2024, 2025, 2026]),
     ("tesla", "OperatingIncome"):           (0.0632,  0.0953,  7, [2017, 2019, 2020, 2021, 2022, 2024, 2025]),
 }
+ROIC_GOLDEN = {
+    "boeing":         (-0.0972027843252799,  0.1354289691243462,  9,  37318000000.0),
+    "microsoft":      (0.9579696691104921,   0.46532944444444446, 10, 369490000000.0),
+    "procter_gamble": (0.20213649904755776,  0.20367777720234087, 10, 78507000000.0),
+    "tesla":          (0.12204813846153846,  0.07712261862369803,  9, 46901000000.0),
+}
+REV_GOLDEN = {
+    "apple":          (2026, 0.0592, 440797731199.99994, 628227735421.482),
+    "boeing":         (2026, 0.065,  95278095000.0,      138803185384.6235),
+    "microsoft":      (2027, 0.134,  376305425999.99994, 709406861343.6075),
+    "procter_gamble": (2027, 0.0259, 89286128800.0,      111898351266.13243),
+    "tesla":          (2026, 0.2573, 119225987099.99998, 347661701178.7101),
+}
+ROIC_BASE = {"Tax": 25.0, "PretaxIncome": 100.0, "Debt": 400.0, "Cash": 100.0,
+             "Equity": 700.0, "OperatingIncome": 100.0}
 PAIRS = [(2020, 1.0), (2021, 2.0), (2022, 3.0), (2023, 4.0)]
 GAPPED = [(2020, 1.0), (2021, 2.0), (2023, 3.0), (2024, 4.0)]
 
@@ -51,30 +67,35 @@ def row(flags = None, **values):
 def test_effective_tax_rate_golden(data_result):
     symbol, data = data_result
     out = effective_tax_rate(data)
+    
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == TAX_GOLDEN[symbol]
 
 def test_effective_tax_rate_window():
     data = {year: row(Tax = 20.0, PretaxIncome = 100.0)
             for year in (TAX_WINDOW_START - 2, TAX_WINDOW_START - 1)}
     out = effective_tax_rate(data)
+    
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (MARGINAL_TAX_RATE, 0, "Fallback")
 
 def test_effective_tax_rate_median():
     data = {year: row(Tax = tax, PretaxIncome = 100.0)
             for year, tax in ((2020, 25.0), (2021, 40.0), (2022, 10.0), (2023, 30.0))}
     out = effective_tax_rate(data)
+    
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (0.275, 4, "Median")
 
 def test_effective_tax_rate_flagged():
     data = {year: row(Tax = 20.0, PretaxIncome = 100.0, flags = {"Tax": ["outlier"]})
             for year in (2020, 2021, 2022)}
     out = effective_tax_rate(data)
+    
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (MARGINAL_TAX_RATE, 0, "Fallback")
 
 def test_effective_tax_rate_pretax_flag_ignored_unguarded():
     data = {year: row(Tax = 20.0, PretaxIncome = 100.0, flags = {"PretaxIncome": ["outlier"]})
             for year in (2020, 2021, 2022)}
     out = effective_tax_rate(data)
+    
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (0.2, 3, "Median")
 
 def test_effective_tax_rate_zero_pretax_unguarded():
@@ -87,12 +108,14 @@ def test_effective_tax_rate_zero_pretax_unguarded():
 def test_driver_ratio_golden(all_data, symbol, metric):
     ratio, mean_last_three, n, years = DRIVER_GOLDEN[(symbol, metric)]
     out = driver_ratio(all_data[symbol], metric)
+    
     assert (out["Driver_Ratio"], out["Mean_Last_Three"]) == (ratio, mean_last_three)
     assert (out["n"], out["Years"], out["Source"]) == (n, years, "Median")
 
 def test_driver_ratio_insufficient():
     data = {year: row(Revenue = 1000.0, CapEx = 100.0) for year in (2020, 2021)}
     out = driver_ratio(data, "CapEx")
+    
     assert out["n"] < MIN_YEARS
     assert (out["Driver_Ratio"], out["Mean_Last_Three"]) == (None, None)
     assert (out["n"], out["Years"], out["Source"]) == (2, [2020, 2021], "Insufficient")
@@ -101,6 +124,7 @@ def test_driver_ratio_zero_revenue():
     data = {year: row(Revenue = 0.0 if year == 2022 else 1000.0, CapEx = 100.0)
             for year in (2020, 2021, 2022, 2023)}
     out = driver_ratio(data, "CapEx")
+    
     assert out["Driver_Ratio"] == 0.1
     assert (out["n"], out["Years"], out["Source"]) == (3, [2020, 2021, 2023], "Median")
 
@@ -114,6 +138,7 @@ def test_driver_ratio_flag_filter(metric, flag, n, source):
     data = {year: row(Revenue = 1000.0, flags = {metric: [flag]}, **{metric: 100.0})
             for year in (2020, 2021, 2022)}
     out = driver_ratio(data, metric)
+    
     assert (out["n"], out["Source"]) == (n, source)
 
 @pytest.mark.parametrize("pairs, k, expected", [
@@ -140,18 +165,21 @@ def test_growth_rate_golden(data_result):
     symbol, data = data_result
     median, mean, mean_last_three, n, source, last_year = GROWTH_GOLDEN[symbol]
     out = growth_rate(data)
+    
     assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (median, mean, mean_last_three)
     assert (out["n"], out["Source"], out["Years"][-1]) == (n, source, last_year)
 
 def test_growth_rate_lengths(data_result):
     symbol, data = data_result
     out = growth_rate(data)
+    
     assert len(out["Rates"]) == out["n"]
     assert len(out["Years"]) == out["n"]
 
 def test_growth_rate_insufficient():
     data = {year: row(Revenue = rev) for year, rev in ((2020, 100.0), (2021, 110.0), (2022, 121.0))}
     out = growth_rate(data)
+    
     assert out["n"] < MIN_YEARS
     assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (None, None, None)
     assert (out["n"], out["Years"], out["Source"]) == (2, [2020, 2021], "Insufficient")
@@ -160,5 +188,86 @@ def test_growth_rate_gap():
     data = {year: row(Revenue = rev) for year, rev in
             ((2020, 100.0), (2021, 110.0), (2022, 121.0), (2024, 200.0), (2025, 220.0), (2026, 242.0))}
     out = growth_rate(data)
+    
     assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (0.1, 0.1, 0.1)
     assert (out["n"], out["Years"], out["Source"]) == (4, [2020, 2021, 2024, 2025], "Calculated")
+
+@pytest.mark.parametrize("symbol", list(ROIC_GOLDEN), ids = list(ROIC_GOLDEN))
+def test_roic_golden(all_data, symbol):
+    median, last, n, ic_last = ROIC_GOLDEN[symbol]
+    out = roic(all_data[symbol])
+    
+    assert out["ROIC_Median"] == pytest.approx(median, rel = REL)
+    assert out["ROIC_Last"] == pytest.approx(last, rel = REL)
+    assert out["IC_Last"] == pytest.approx(ic_last, rel = REL)
+    assert (out["n"], out["Source"]) == (n, "Median")
+    
+def test_roic_apple_insuf(all_data):
+    out = roic(all_data["apple"])
+    
+    assert out["ROIC_Median"] is None
+    assert out["ROIC_Last"] is None
+    assert out["IC_Last"] == pytest.approx(39970000000.0, rel = REL)
+    assert (out["n"], out["Source"]) == (3, "Insufficient")
+
+@pytest.mark.parametrize("overrides, flags, expected", [
+    ({},                          None,                      (0.075, 0.075, 1000.0, 4, "Median")),
+    ({2021: {"Equity": -400.0}},  None,                      (None,  None,  1000.0, 3, "Insufficient")),
+    ({2024: {"Debt": None}},      None,                      (0.075, 0.075, None,   3, "Median")),
+    ({},                          {"Equity": ["outlier"]},   (0.075, 0.075, 1000.0, 4, "Median")),
+], ids = ["clean", "negative_ic", "last_year_missing", "flag_ignored"])
+def test_roic_synth(overrides, flags, expected):
+    data = {year: row(flags = flags, **{**ROIC_BASE, **overrides.get(year, {})}) for year in range(2020, 2025)}
+    out = roic(data)
+
+    assert (out["ROIC_Median"], out["ROIC_Last"], out["IC_Last"], out["n"], out["Source"]) == expected
+
+@pytest.mark.parametrize("symbol", list(REV_GOLDEN), ids = list(REV_GOLDEN))
+def test_proj_rev_golden(all_data, symbol):
+    first_year, growth, rev_first, rev_last = REV_GOLDEN[symbol]
+    out = project_revenue(all_data[symbol], YEARS)
+    years = sorted(out)
+
+    assert (years[0], out[years[0]]["Growth_Rate"]) == (first_year, growth)
+    assert out[years[0]]["Revenue"] == pytest.approx(rev_first, rel = REL)
+    assert out[years[-1]]["Revenue"] == pytest.approx(rev_last, rel = REL)
+
+def test_proj_rev_invariants(data_result):
+    symbol, data = data_result
+    out = project_revenue(data, YEARS)
+    years = sorted(out)
+    last_actual = data[sorted(data)[-1]]["Revenue"]["Value"]
+
+    assert len(out) == YEARS
+    assert out[years[-1]]["Growth_Rate"] == TERMINAL_GROWTH
+    assert out[years[0]]["Revenue"] == pytest.approx(last_actual * (1 + out[years[0]]["Growth_Rate"]), rel = REL)
+
+@pytest.mark.parametrize("base, revenue_growth, growth, rev_last, source", [
+    ("Growth_Rate_Median", None, 0.0592, 628227735421.482,   "Growth_Rate_Median"),
+    ("Growth_Rate_Mean",   None, 0.0749, 676652225007.0891,  "Growth_Rate_Mean"),
+    ("Mean_Last_Three",    None, 0.0194, 518389250195.35,    "Mean_Last_Three"),
+    ("Growth_Rate_Median", 0.05, 0.0475, 594022013599.4677,  "Override"),
+    ("Growth_Rate_Median", 0.0,  0.0025, 476937088221.56537, "Override"),
+])
+def test_proj_rev_bases(all_data, base, revenue_growth, growth, rev_last, source):
+    out = project_revenue(all_data["apple"], YEARS, base, revenue_growth = revenue_growth)
+    years = sorted(out)
+
+    assert (out[years[0]]["Growth_Rate"], out[years[0]]["Source"]) == (growth, source)
+    assert out[years[-1]]["Revenue"] == pytest.approx(rev_last, rel = REL)
+
+@pytest.mark.parametrize("short, base, revenue_growth, message", [
+    (False, "Bogus",              None,   "Unknown base: Bogus"),
+    (False, "Growth_Rate_Median", "0.05", "Growth is not an integer or float."),
+    (False, "Growth_Rate_Median", True,   "Growth is not an integer or float."),
+    (True,  "Growth_Rate_Median", None,   "Growth_Rate_Median is not defined"),
+], ids = ["unknown_base", "string_override", "bool_override", "insufficient_growth"])
+def test_proj_rev_raises(all_data, short, base, revenue_growth, message):
+    short_data = {year: row(Revenue = rev) for year, rev in ((2020, 100.0), (2021, 110.0), (2022, 121.0))}
+    data = short_data if short else all_data["apple"]
+
+    with pytest.raises(ValueError, match = message):
+        project_revenue(data, YEARS, base, revenue_growth = revenue_growth)
+
+def test_proj_rev_zero_years_unguarded(all_data):
+    assert project_revenue(all_data["apple"], 0) == {}

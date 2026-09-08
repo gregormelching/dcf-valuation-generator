@@ -3776,6 +3776,68 @@ dass ein Test davon profitiert.
 **Offen bleibt der Rest von Phase 6:** `project_revenue` und `roic`, dann `project_fcf`, danach
 `validation.py` vollständig und die netzfreien Teile von `parser.py`.
 
+#### Schritt 33 — `project_revenue` und `roic` in Isolation — DONE
+
+Zweiter Teil des dritten Testblocks. `tests/test_model.py` wächst auf 75 Tests, Suite jetzt bei
+**286 grün in 93 s**. Damit sind alle Eingänge von `project_fcf` gepinnt; offen bleibt aus dem Block
+nur `project_fcf` selbst.
+
+**Korrektur zur Phase-6-Liste.** Dort steht `roic` bei negativem Eigenkapital, "Boeing ist der reale
+Fall". Das trifft nicht zu: `roic` rechnet mit `IC = Debt + Equity - Cash`, und Boeings Schulden
+überdecken das negative Eigenkapital der Jahre 2019 bis 2024 in jedem einzelnen Jahr — `IC` läuft von
+523 Mio (2016) auf 37,3 Mrd (2025), durchgehend positiv. **Apple ist der Fall:** `IC` ist von 2016
+bis 2021 negativ, Tiefpunkt -22,3 Mrd, weil die Nettoliquidität Schulden plus Eigenkapital
+übersteigt. Apple ist die einzige der fünf Firmen mit `Source = "Insufficient"`, und der Zweig wäre
+ungetestet geblieben, wenn man ihn bei Boeing gesucht hätte.
+
+**Fund: `Source = "Insufficient"` ist klebrig und rückwirkend.** Ein einziges Jahr mit `IC <= 0`
+setzt die Variable, und der Guard am Ende (`len(roics) >= MIN_YEARS and source != "Insufficient"`)
+verwirft danach alle bereits berechneten Werte. Apple berechnet drei gültige ROICs aus 2023, 2024
+und 2025 — genau `MIN_YEARS` — und bekommt trotzdem `None`, allein wegen der Jahre 2016 bis 2021.
+Gepinnt, nicht behoben; ob eine Kennzahl über eine alte Bilanzlage die aktuelle löschen soll, ist
+eine offene Entscheidung.
+
+**Fund: `IC_Last` überlebt `Insufficient` und kommt aus `max(data)`, nicht aus `max(dct)`.** Apple
+liefert `ROIC_Median = None` und gleichzeitig `IC_Last = 39,97 Mrd`, und genau dieser Wert geht in
+`project_fcf` als `cap_basis` in die Terminalzeile — die Kennzahl ist also aus, die Kapitalbasis
+läuft weiter. Umgekehrt reicht ein `None` in einer der vier Positionen des letzten Datenjahres, damit
+`IC_Last` `None` wird, während `ROIC_Median` weiterrechnet; dann fallen `Implicit_ROIC` und
+`Capital_Turnover` in der TV-Zeile still auf `None`. Beide Hälften stehen als synthetische Fälle im
+Test.
+
+**`roic` prüft überhaupt keine Flags, nur auf `None`.** Ein als `outlier` markiertes `Equity` geht
+voll ein. Das ist der Gegensatz zu `driver_ratio` und `effective_tax_rate` und steht als eigener
+Fall (`flag_ignored`) im Test, damit es nicht als Versehen gelesen wird.
+
+**Apple steht bewusst nicht in `ROIC_GOLDEN`.** `pytest.approx(None)` wirft, und die Tabelle wird
+über `list(ROIC_GOLDEN)` parametrisiert — Apple darin hätte `test_roic_golden` mitgerissen. Dieselbe
+Konstruktion wie bei Teslas `TV_Share` in `test_golden_values.py`. Apple bekommt einen eigenen Test
+mit Literalen.
+
+**Die erste `Growth_Rate` ist nie die Basisrate.** `g_t` fadet schon bei `i = 1`, Apples Median
+`0.063` erscheint im ersten Projektionsjahr als `0.0592`. Die Golden-Tabelle führt deshalb die
+gefadete Zahl, nicht die Basis. Gegenstück dazu die Invariante über alle fünf: die `Growth_Rate` des
+letzten Projektionsjahres ist exakt `TERMINAL_GROWTH` — das ist der Test, der festhält, dass der Fade
+ankommt.
+
+**Die acht mittleren Projektionsjahre bleiben ungepinnt.** Vierzig weitere Golden-Zahlen für einen
+linearen Fade, dessen Endpunkte, Länge und Terminalrate schon stehen. Ein Vorzeichen- oder
+Rundungsfehler in der Mitte verschiebt `rev_last`. Nicht gedeckt ist eine Vertauschung zweier
+mittlerer Jahre bei gleichem Produkt — konstruierbar, aber keine reale Fehlerklasse.
+
+**Microsoft und P&G projizieren ab 2027, die anderen drei ab 2026.** Beide haben ein Geschäftsjahr
+2026 in der Fixture. Das erste Projektionsjahr steht deshalb in `REV_GOLDEN` und nicht als Literal im
+Test.
+
+**Zwei stille Kanten, gepinnt.** `years = 0` gibt kommentarlos `{}` zurück, ohne `raise` — der Test
+trägt `unguarded` im Namen. Und `revenue_growth = True` wirft, weil die Prüfung
+`type(growth) not in (int, float)` lautet und nicht `isinstance`; mit `isinstance` liefe `True` als
+100 Prozent Wachstum durch, da `bool` von `int` erbt. Hier ist die schärfere Variante die richtige,
+der Test hält sie fest.
+
+**Offen bleibt der Rest von Phase 6:** `project_fcf`, dann `validation.py` vollständig und die
+netzfreien Teile von `parser.py`.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
