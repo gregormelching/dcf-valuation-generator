@@ -8,6 +8,7 @@ TAX_WINDOW_START = 2018
 MARGINAL_TAX_RATE = 0.25
 MIN_YEARS = 3
 COMPARATOR_WINDOW = 3
+MIN_IC_REVENUE_SHARE = 0.05
 TERMINAL_GROWTH = 0.025
     
 def flags_clean(data: dict, year: int, metric: str) -> bool:
@@ -220,12 +221,13 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     return value
     
 def roic(data: dict) -> dict:
-    value = {"ROIC_Median": 0, "ROIC_Last": 0, "IC_Last": 0, "IC_Last_Year": None, "n": 0, "Source": "", "Years": []}
+    value = {"ROIC_Median": 0, "ROIC_Last": 0, "IC_Last": 0, "IC_Last_Year": None, "n": 0, "Source": "", "Years": [], "Excluded_Small_IC": 0}
     ic = {}
     nopat = {}
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     roics = []
     clean = []
+    excluded = 0
 
     for year in sorted(data):
         if all(flags_clean(data, year, m) for m in ["Debt", "Cash", "Equity"]):
@@ -235,6 +237,10 @@ def roic(data: dict) -> dict:
 
     for year in sorted(nopat):
         if year-1 not in ic or ic[year-1] <= 0: continue
+        rev = data[year-1]["Revenue"]["Value"]
+        if rev in (0, None) or ic[year-1] / rev < MIN_IC_REVENUE_SHARE:
+            excluded += 1
+            continue
         roics.append(nopat[year] / ic[year-1])
         clean.append(year)
     if len(roics) >= MIN_YEARS:
@@ -247,7 +253,7 @@ def roic(data: dict) -> dict:
         source = "Insufficient"
 
     ic_last_year = max(ic) if ic else None
-    value.update({"ROIC_Median": median, "ROIC_Last": last, "IC_Last": ic.get(ic_last_year), "IC_Last_Year": ic_last_year, "n": len(roics), "Source": source, "Years": clean})
+    value.update({"ROIC_Median": median, "ROIC_Last": last, "IC_Last": ic.get(ic_last_year), "IC_Last_Year": ic_last_year, "n": len(roics), "Source": source, "Years": clean, "Excluded_Small_IC": excluded})
     return value
 
 if __name__ == "__main__":

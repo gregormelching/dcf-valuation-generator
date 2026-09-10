@@ -40,13 +40,14 @@ ASSUMPTIONS = {
 
 WACC_OFFSETS = (-0.02, -0.01, 0.0, 0.01, 0.02)
 TERMINAL_GROWTHS = (0.015, 0.02, 0.025, 0.03, 0.035)
-NWC_INTENSITIES = (0.0282, 0.1686, 0.2092, 0.2211, 0.4368)
+NWC_OFFSETS = (-0.05, -0.025, 0.0, 0.025, 0.05)
 MARGIN_BASES = ("Driver_Ratio", "Mean_Last_Three", "Last")
 MARKET_PRICE_FREQ = "1wk"
 MC_DRAWS = 2000
 MC_SEED = 12345
 MC_Z = 1.96
 MC_PERCENTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+MC_MEDIAN = 0.5
 MC_BORDERS = (min(TERMINAL_GROWTHS), TERMINAL_GROWTH, max(TERMINAL_GROWTHS))
 IMPLIED_ITERATIONS = 80
 IMPLIED_EPS = 1e-6
@@ -251,15 +252,17 @@ def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: in
         table[mb] = dct
     return table
 
-def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, nwc_intensities: tuple = NWC_INTENSITIES):
+def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, offsets: tuple = NWC_OFFSETS):
     table = {}
-    
+
     metrics = ASSUMPTIONS[symbol]["metrics"]
     nwc_str = metrics["NWC"] if metrics is not None and "NWC" in metrics else "Driver_Ratio"
-    
-    d  = driver_ratio(get_data(symbol, start_year, as_of), "NWC")[nwc_str]    
-    for i in nwc_intensities:
-        is_intensity = abs(i - d) < 1e-9
+
+    d  = driver_ratio(get_data(symbol, start_year, as_of), "NWC")[nwc_str]
+    if d is None: raise ValueError(f"{symbol}: NWC {nwc_str} is not available.")
+    for o in offsets:
+        i = d + o
+        is_intensity = o == 0.0
         try:
             dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of, nwc_intensity = i)
             wacc = dcf["wacc"]
@@ -274,6 +277,7 @@ def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as
                 "Upside": wacc["Upside"],
                 "WACC": wacc["WACC"],
                 "NWC_Intensity": i,
+                "NWC_Offset": o,
                 "Is_Base": is_intensity,
                 "Status": "calculated"
             }
@@ -289,10 +293,11 @@ def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as
                 "Upside": None,
                 "WACC": None,
                 "NWC_Intensity": i,
+                "NWC_Offset": o,
                 "Is_Base": is_intensity,
                 "Status": str(e)
             }
-        table[i] = dct
+        table[o] = dct
     return table
 
 def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None = None, draws: int = MC_DRAWS, seed: int = MC_SEED):
@@ -351,9 +356,16 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     draws_failed = sum(fails.values())
     margin_range = (m_low, m_mode, m_high)
     margin_bases_used = sorted(margins)
+    median_value = percentiles[MC_MEDIAN] if percentiles is not None else None
+    median_offset = median_value / vps - 1 if median_value is not None and vps not in (0, None) else None
+
+    if m_low == m_high: mode_position = "Degenerate"
+    elif m_mode == m_low: mode_position = "Min"
+    elif m_mode == m_high: mode_position = "Max"
+    else: mode_position = "Interior"
     d = list(values)
     
-    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Margin_Bases_Used": margin_bases_used, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
+    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Margin_Bases_Used": margin_bases_used, "Median_Offset": median_offset, "Mode_Position": mode_position, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
 
 def _lever_value(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None, key: str, x: float) -> float | None:
     try:

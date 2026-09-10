@@ -4145,6 +4145,96 @@ Lücke, die vor Phase 4 zu schließen ist, weil das Output-Interface genau auf d
 aufsetzt. Zusammen mit dem `roic`-Schwellwert sind das die zwei offenen Punkte, mit denen Phase 4
 startet.
 
+#### Die drei Tabellenfunktionen gepinnt — DONE
+
+`tests/test_tables.py`, 16 Tests, Suite bei **407 grün in 91 s**. Damit ist die Lücke zu, die der
+`dcf[wacc]`-Tippfehler aufgedeckt hat: `sensitivity_grid`, `sensitivity_table` und `nwc_scenario`
+hatten zusammen null Tests, und ein Fehler, der zwei von ihnen komplett tötet, ließ die Suite grün.
+
+**Der Kern ist die Verdrahtung, nicht die Zahl.** Je Funktion prüft ein Test, dass die Basiszeile
+exakt dem nackten `dcf_value`-Lauf entspricht — `grid[(0.0, TERMINAL_GROWTH)]`, die Zeile mit
+`Is_Base` in `sensitivity_table`, die mit `Is_Base` in `nwc_scenario`. Das ist die Assertion, die
+jeden falsch durchgereichten Key trifft, ohne eine einzige weitere Golden-Zahl zu kosten.
+
+**Der zweite Kern ist die Schlüsselmenge in beiden Zweigen.** Für `sensitivity_grid` und
+`sensitivity_table` ist der `except`-Zweig eigens erzwungen: P&G mit `offset = -0.03` und
+`g = 0.035` fällt unter `wacc > g`, Boeing mit `margin_bases = ("Mean_Last_Three",)` läuft in
+"Missing data for EBIT, D&A, CapEx, or Working Capital" — der Pfad, den der Kontiguitäts-Fix erst
+erreichbar gemacht hat. Beide Zeilen tragen dieselbe Schlüsselmenge wie eine gerechnete und
+unterscheiden sich nur in `Status`. `nwc_scenario` bleibt dort ungetestet: über seine eigenen
+Parameter ist kein `ValueError` erreichbar, ein nicht-numerischer Wert stirbt vorher im
+`Is_Base`-Vergleich an einem `TypeError`.
+
+**Fund: `NWC_INTENSITIES` markiert nur bei Boeing eine Basiszeile.** Die Konstante ist
+(0,0282 / 0,1686 / 0,2092 / 0,2211 / 0,4368), Boeings NWC-Driver-Ratio ist 0,2211 und trifft. Die
+anderen vier liegen daneben — Apple -0,0882, Microsoft -0,084, P&G -0,0227, Tesla -0,0052, drei davon
+negativ und damit außerhalb jeder Zahl der Tupels. Für vier von fünf Firmen ist `Is_Base` in keiner
+Zeile wahr, die Szenariotabelle hat also keinen Anker. Gepinnt als
+`test_nwc_intensities_anchor_only_boeing`, damit der Zustand nicht stillschweigend bleibt; der Fix
+gehört in Phase 4, weil erst das Output entscheidet, ob die Achse pro Firma um den eigenen Basiswert
+gelegt wird oder fest bleibt.
+
+**Der Monte-Carlo-Versatz aus Schritt 22 ist durch den Kontiguitäts-Fix schlechter geworden, nicht
+besser.** Boeings MC-Median liegt jetzt 23,9% über dem Basisfall (62,47 gegen 50,43), vorher -9,0%.
+Tesla ist von +16,5% auf +6,0% gefallen, die übrigen drei bleiben unter 2%. Ursache ist dieselbe wie
+vorher: `m_mode` sitzt bei Boeing und Tesla auf dem Minimum der Spanne, und das Streichen der
+`Mean_Last_Three`-Basis hat bei Boeing genau den unteren Rand entfernt. Vor Phase 4 zu entscheiden,
+wie zuvor notiert — ein Dashboard, das Median und Basiswert nebeneinander zeigt, macht die Differenz
+sonst zu einer Erkenntnis über das Unternehmen statt über die Wahl der Margenbänder.
+
+#### Die drei offenen Punkte vor Phase 4 — entschieden
+
+Suite bei **412 grün in 90 s**. Keine Bewertungszahl bewegt sich: alle fünf `GOLDEN`-Blöcke,
+`FCF_GOLDEN`, `LEVER_GOLDEN` und `HORIZON_GOLDEN` bleiben unverändert. Betroffen sind nur die drei
+Ausgaben, um die es ging.
+
+**1. Der Monte-Carlo-Versatz wird benannt, nicht wegdefiniert.** Die Dreiecksverteilung über die drei
+Margin-Basen bleibt exakt wie sie ist. `monte_carlo` führt zwei neue Keys: `Median_Offset`
+(Median gegen Basiswert) und `Mode_Position` ("Min" / "Interior" / "Max" / "Degenerate"). Gemessen:
+Boeing +23,9% bei Modus auf dem Minimum, Tesla +6,0% ebenso, P&G -1,2% bei Modus auf dem Maximum,
+Apple -1,1% und Microsoft -1,7% mit Modus im Inneren.
+
+Die Alternative wäre gewesen, das Band symmetrisch um den Basiswert zu legen. Verworfen: das
+erfindet eine Spanne, für die es keine Evidenz gibt. Die drei Margin-Basen **sind** die Evidenz, und
+wenn die konfigurierte Basis unter ihnen die niedrigste ist, dann ist die Rechtsschiefe der
+Verteilung eine korrekte Aussage — nur eben eine über die Wahl der Basis, nicht über das
+Unternehmen. `Mode_Position` sagt genau das, in einem Wort, direkt neben der Zahl. Damit ist die
+Voraussetzung erfüllt, unter der ein Panel Median und Basiswert nebeneinander zeigen darf.
+
+**2. Die NWC-Achse liegt jetzt um den eigenen Basiswert.** `NWC_INTENSITIES` (absolute Tupel-Werte,
+erkennbar aus Boeing abgeleitet) ist ersetzt durch `NWC_OFFSETS = (-0.05, -0.025, 0.0, 0.025, 0.05)`,
+Prozentpunkte vom Umsatz. `nwc_scenario` addiert den Offset auf die eigene NWC-Ratio der Firma,
+keyt die Tabelle nach dem Offset und führt `NWC_Intensity` und `NWC_Offset` in jeder Zeile.
+`Is_Base` ist damit für **jede** Firma in genau einer Zeile wahr, bei Offset null.
+
+Der Grund für Prozentpunkte statt relativer Schritte ist derselbe, der in Schritt 20 schon für die
+WACC-Achse notiert wurde: relative Schritte bleiben nicht vergleichbar. Hier kommt dazu, dass drei
+der fünf Basiswerte negativ sind (Apple -0,0882, Microsoft -0,084, P&G -0,0227) — eine absolute
+Achse kann eine Kennzahl mit Vorzeichenwechsel nicht firmenübergreifend abdecken, und genau daran ist
+die alte Konstante gescheitert. Zusätzlich wirft `nwc_scenario` jetzt, wenn die NWC-Ratio selbst
+`None` ist; ohne den Guard wäre die Achse still um `None` gelegt worden.
+
+**3. `roic` bekommt eine Schwelle auf den Nenner, relativ zum Umsatz.**
+`MIN_IC_REVENUE_SHARE = 0.05` in `model.py`: liegt das Invested Capital des Vorjahres unter 5% des
+damaligen Umsatzes, wird das Paar verworfen und in `Excluded_Small_IC` gezählt. Absolute Schwellen
+wären größenabhängig und damit für fünf Firmen unterschiedlicher Größe wertlos.
+
+Wirkung: Apple verliert alle drei Paare (IC-Anteile 0,41% / 2,91% / 1,77%) und steht bei n=0,
+Boeing verliert zwei von vier (0,56% / 1,68%) und steht bei n=2 — beide `Insufficient`, aber mit
+`Excluded_Small_IC` als sichtbarem Grund statt des zufälligen Nebeneffekts, den der alte klebrige
+Zweig hatte. Microsoft, P&G und Tesla ändern sich nicht, ihre Nenner liegen zwischen 14% und 123%.
+`IC_Last` bleibt bei allen fünf unverändert und ist bewusst nicht gefiltert: es ist ein Bestand, der
+in `project_fcf` mit dem akkumulierten Reinvestment summiert wird, keine Ratio.
+
+Damit ist auch die inhaltliche Aussage sauber: Apple hat auf `Debt + Equity - Cash` praktisch kein
+Invested Capital, und eine Rendite darauf ist nicht definiert — nicht 1617%.
+
+**Ein Nebenfund, der in die Serialisierungsschicht gehört:** `dcf_value` meldet `NWC_Intensity: None`
+im Basisfall, weil der Key den Override führt und nicht die effektiv verwendete Intensität. Für den
+Annahmen-Block in Phase 4 ist das zu wenig — dort muss stehen, welche Intensität gerechnet wurde,
+nicht ob sie überschrieben war. Gleiches Muster wie `Revenue_Growth`, das ebenfalls nur den Override
+trägt.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

@@ -37,6 +37,8 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.004157942544885411,
         "Margin_Range": (0.2881, 0.311, 0.31970799762591884),
+        "Median_Offset": -0.010760294157041383,
+        "Mode_Position": "Interior",
         "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "boeing": {
@@ -45,6 +47,8 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.005015380997594274,
         "Margin_Range": (0.0478521847020556, 0.0478521847020556, 0.0698),
+        "Median_Offset": 0.2389399163852528,
+        "Mode_Position": "Min",
         "Margin_Bases_Used": ["Driver_Ratio", "Last"],
     },
     "microsoft": {
@@ -53,6 +57,8 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.004902805237750883,
         "Margin_Range": (0.4168, 0.4568, 0.4678081840892722),
+        "Median_Offset": -0.01713679502385057,
+        "Mode_Position": "Interior",
         "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "procter_gamble": {
@@ -61,6 +67,8 @@ MC_GOLDEN = {
         "P_Above_Market": 0.191,
         "WACC_Sigma": 0.0037599663784301704,
         "Margin_Range": (0.2211, 0.2301, 0.2301),
+        "Median_Offset": -0.011786552255157567,
+        "Mode_Position": "Max",
         "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "tesla": {
@@ -69,6 +77,8 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.012612017977356962,
         "Margin_Range": (0.04592573845001951, 0.04592573845001951, 0.0632),
+        "Median_Offset": 0.059938749764499866,
+        "Mode_Position": "Min",
         "Margin_Bases_Used": ["Driver_Ratio", "Last"],
     },
 }
@@ -666,6 +676,14 @@ def test_margin_range(mc_result):
     assert val["Margin_Range"][1] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][1], rel = REL)
     assert val["Margin_Range"][2] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][2], rel = REL)
     assert val["Margin_Bases_Used"] == MC_GOLDEN[sym]["Margin_Bases_Used"]
+    assert val["Mode_Position"] == MC_GOLDEN[sym]["Mode_Position"]
+
+def test_median_offset(mc_result):
+    sym = mc_result[0]
+    val = mc_result[1]
+
+    assert val["Median_Offset"] == pytest.approx(MC_GOLDEN[sym]["Median_Offset"], rel = REL)
+    assert val["Median_Offset"] == pytest.approx(val["Percentiles"][0.5] / val["Base_Value_Per_Share"] - 1, rel = REL)
 
 @pytest.mark.slow    
 def test_wacc_sigma(mc_result):

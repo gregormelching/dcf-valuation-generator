@@ -37,11 +37,13 @@ DRIVER_GOLDEN = {
     ("tesla", "OperatingIncome"):           (0.0632,  None,    7, [2017, 2019, 2020, 2021, 2022, 2024, 2025]),
 }
 ROIC_GOLDEN = {
-    "apple":          (16.171844421994518,   16.171844421994518,   3, 39970000000.0,  2025),
-    "boeing":         (2.838244162532317,   -0.02075502094297068,  4, 37318000000.0,  2025),
     "microsoft":      (0.9579696691104921,   0.46532944444444446, 10, 369490000000.0, 2026),
     "procter_gamble": (0.2035821136094938,   0.20388232430472836,  8, 78507000000.0,  2026),
     "tesla":          (0.12204813846153846,  0.07712261862369803,  7, 46901000000.0,  2025),
+}
+ROIC_SMALL_IC = {
+    "apple":  (0, 3, 39970000000.0, 2025),
+    "boeing": (2, 2, 37318000000.0, 2025),
 }
 REV_GOLDEN = {
     "apple":          (2026, 0.0592, 440797731199.99994, 628227735421.482),
@@ -58,7 +60,7 @@ FCF_GOLDEN = {
     "tesla":          (2026, -619219475.9234953, 14419269056.387003, 14779750782.796675),
 }
 ROIC_BASE = {"Tax": 25.0, "PretaxIncome": 100.0, "Debt": 400.0, "Cash": 100.0,
-             "Equity": 700.0, "OperatingIncome": 100.0}
+             "Equity": 700.0, "OperatingIncome": 100.0, "Revenue": 5000.0}
 PAIRS = [(2020, 1.0), (2021, 2.0), (2022, 3.0), (2023, 4.0)]
 GAPPED = [(2020, 1.0), (2021, 2.0), (2023, 3.0), (2024, 4.0)]
 
@@ -223,12 +225,17 @@ def test_roic_golden(all_data, symbol):
     assert out["IC_Last"] == pytest.approx(ic_last, rel = REL)
     assert (out["n"], out["Source"], out["IC_Last_Year"]) == (n, "Median", ic_last_year)
     assert len(out["Years"]) == out["n"]
+    assert out["Excluded_Small_IC"] == 0
 
-def test_roic_apple_negative_ic_not_sticky(all_data):
-    out = roic(all_data["apple"])
+@pytest.mark.parametrize("symbol", list(ROIC_SMALL_IC), ids = list(ROIC_SMALL_IC))
+def test_roic_small_ic_excluded(all_data, symbol):
+    n, excluded, ic_last, ic_last_year = ROIC_SMALL_IC[symbol]
+    out = roic(all_data[symbol])
 
-    assert out["Years"] == [2023, 2024, 2025]
-    assert out["Source"] == "Median"
+    assert (out["ROIC_Median"], out["ROIC_Last"]) == (None, None)
+    assert (out["n"], out["Excluded_Small_IC"], out["Source"]) == (n, excluded, "Insufficient")
+    assert out["IC_Last"] == pytest.approx(ic_last, rel = REL)
+    assert out["IC_Last_Year"] == ic_last_year
 
 @pytest.mark.parametrize("overrides, flags, expected", [
     ({},                          None,                            (0.075, 0.075, 1000.0, 2024, 4, "Median")),
