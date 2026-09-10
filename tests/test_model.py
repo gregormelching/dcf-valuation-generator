@@ -14,9 +14,9 @@ REL = 1e-9
 SYMBOLS = ("apple", "boeing", "microsoft", "procter_gamble", "tesla")
 TAX_GOLDEN = {
     "apple":          (0.1578, 8, "Median"),
-    "boeing":         (0.25,   2, "Fallback"),
+    "boeing":         (0.25,   1, "Fallback"),
     "microsoft":      (0.1707, 8, "Median"),
-    "procter_gamble": (0.2034, 7, "Median"),
+    "procter_gamble": (0.2026, 6, "Median"),
     "tesla":          (0.2043, 5, "Median"),
 }
 GROWTH_GOLDEN = {
@@ -31,16 +31,17 @@ DRIVER_GOLDEN = {
     ("apple", "CapEx"):                     (0.0304,  0.0278, 10, list(range(2016, 2026))),
     ("apple", "NWC"):                       (-0.0968, -0.0882, 10, list(range(2016, 2026))),
     ("apple", "OperatingIncome"):           (0.2881,  0.311,  10, list(range(2016, 2026))),
-    ("boeing", "OperatingIncome"):          (0.0698,  0.0186,  5, [2016, 2017, 2018, 2022, 2023]),
+    ("boeing", "OperatingIncome"):          (0.0698,  None,    5, [2016, 2017, 2018, 2022, 2023]),
     ("microsoft", "OperatingIncome"):       (0.4168,  0.4568, 10, list(range(2017, 2027))),
     ("procter_gamble", "OperatingIncome"):  (0.2211,  0.2301,  9, [2016, 2017, 2018, 2021, 2022, 2023, 2024, 2025, 2026]),
-    ("tesla", "OperatingIncome"):           (0.0632,  0.0953,  7, [2017, 2019, 2020, 2021, 2022, 2024, 2025]),
+    ("tesla", "OperatingIncome"):           (0.0632,  None,    7, [2017, 2019, 2020, 2021, 2022, 2024, 2025]),
 }
 ROIC_GOLDEN = {
-    "boeing":         (-0.0972027843252799,  0.1354289691243462,  9,  37318000000.0),
-    "microsoft":      (0.9579696691104921,   0.46532944444444446, 10, 369490000000.0),
-    "procter_gamble": (0.20213649904755776,  0.20367777720234087, 10, 78507000000.0),
-    "tesla":          (0.12204813846153846,  0.07712261862369803,  9, 46901000000.0),
+    "apple":          (16.171844421994518,   16.171844421994518,   3, 39970000000.0,  2025),
+    "boeing":         (2.838244162532317,   -0.02075502094297068,  4, 37318000000.0,  2025),
+    "microsoft":      (0.9579696691104921,   0.46532944444444446, 10, 369490000000.0, 2026),
+    "procter_gamble": (0.2035821136094938,   0.20388232430472836,  8, 78507000000.0,  2026),
+    "tesla":          (0.12204813846153846,  0.07712261862369803,  7, 46901000000.0,  2025),
 }
 REV_GOLDEN = {
     "apple":          (2026, 0.0592, 440797731199.99994, 628227735421.482),
@@ -53,7 +54,7 @@ FCF_GOLDEN = {
     "apple":          (2026, 118984867042.3343,  118776269439.79715, 121745676175.79207),
     "boeing":         (2026, 2786036759.8959374, 6358053410.524411,  6517004745.78752),
     "microsoft":      (2027, 125285852074.45753, 194040511749.01025, 198891524542.73547),
-    "procter_gamble": (2027, 15168647077.421728, 16236101086.368109, 16642003613.52731),
+    "procter_gamble": (2027, 15183014711.017233, 16236101086.368109, 16642003613.52731),
     "tesla":          (2026, -619219475.9234953, 14419269056.387003, 14779750782.796675),
 }
 ROIC_BASE = {"Tax": 25.0, "PretaxIncome": 100.0, "Debt": 400.0, "Cash": 100.0,
@@ -100,17 +101,18 @@ def test_effective_tax_rate_flagged():
     
     assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (MARGINAL_TAX_RATE, 0, "Fallback")
 
-def test_effective_tax_rate_pretax_flag_ignored_unguarded():
+def test_effective_tax_rate_pretax_flag_skipped():
     data = {year: row(Tax = 20.0, PretaxIncome = 100.0, flags = {"PretaxIncome": ["outlier"]})
             for year in (2020, 2021, 2022)}
     out = effective_tax_rate(data)
-    
-    assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (0.2, 3, "Median")
 
-def test_effective_tax_rate_zero_pretax_unguarded():
+    assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (MARGINAL_TAX_RATE, 0, "Fallback")
+
+def test_effective_tax_rate_zero_pretax_skipped():
     data = {year: row(Tax = 20.0, PretaxIncome = 0.0) for year in (2020, 2021, 2022)}
-    with pytest.raises(ZeroDivisionError):
-        effective_tax_rate(data)
+    out = effective_tax_rate(data)
+
+    assert (out["Effective_Tax_Rate"], out["n"], out["Source"]) == (MARGINAL_TAX_RATE, 0, "Fallback")
 
 @pytest.mark.parametrize("symbol, metric", list(DRIVER_GOLDEN),
                          ids = [f"{symbol}-{metric}" for symbol, metric in DRIVER_GOLDEN])
@@ -120,6 +122,10 @@ def test_driver_ratio_golden(all_data, symbol, metric):
     
     assert (out["Driver_Ratio"], out["Mean_Last_Three"]) == (ratio, mean_last_three)
     assert (out["n"], out["Years"], out["Source"]) == (n, years, "Median")
+    if mean_last_three is None:
+        assert (out["Mean_Last_Three_Source"], out["Mean_Last_Three_Years"]) == ("Not_Contiguous", [])
+    else:
+        assert (out["Mean_Last_Three_Source"], out["Mean_Last_Three_Years"]) == ("Calculated", years[-MIN_YEARS:])
 
 def test_driver_ratio_insufficient():
     data = {year: row(Revenue = 1000.0, CapEx = 100.0) for year in (2020, 2021)}
@@ -127,6 +133,7 @@ def test_driver_ratio_insufficient():
     
     assert out["n"] < MIN_YEARS
     assert (out["Driver_Ratio"], out["Mean_Last_Three"]) == (None, None)
+    assert (out["Mean_Last_Three_Source"], out["Mean_Last_Three_Years"]) == ("Insufficient", [])
     assert (out["n"], out["Years"], out["Source"]) == (2, [2020, 2021], "Insufficient")
 
 def test_driver_ratio_zero_revenue():
@@ -163,12 +170,13 @@ def test_driver_ratio_flag_filter(metric, flag, n, source):
 def test_rolling_means(pairs, k, expected):
     assert rolling_means(pairs, k) == pytest.approx(expected, rel = REL)
 
-def test_rolling_means_zero_k_unguarded():
-    with pytest.raises(IndexError):
-        rolling_means(PAIRS, 0)
+@pytest.mark.parametrize("k", [0, -1])
+def test_rolling_means_invalid_k(k):
+    with pytest.raises(ValueError, match = "Window must be at least 1"):
+        rolling_means(PAIRS, k)
 
-def test_rolling_means_unsorted_unguarded():
-    assert rolling_means(PAIRS[-1:] + PAIRS[:-1], 2) == pytest.approx([1.5, 2.5], rel = REL)
+def test_rolling_means_sorts():
+    assert rolling_means(PAIRS[-1:] + PAIRS[:-1], 2) == pytest.approx([1.5, 2.5, 3.5], rel = REL)
 
 def test_growth_rate_golden(data_result):
     symbol, data = data_result
@@ -177,6 +185,8 @@ def test_growth_rate_golden(data_result):
     
     assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (median, mean, mean_last_three)
     assert (out["n"], out["Source"], out["Years"][-1]) == (n, source, last_year)
+    assert out["Mean_Last_Three_Source"] == "Calculated"
+    assert out["Mean_Last_Three_Years"] == out["Years"][-MIN_YEARS:]
 
 def test_growth_rate_lengths(data_result):
     symbol, data = data_result
@@ -191,6 +201,7 @@ def test_growth_rate_insufficient():
     
     assert out["n"] < MIN_YEARS
     assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (None, None, None)
+    assert (out["Mean_Last_Three_Source"], out["Mean_Last_Three_Years"]) == ("Insufficient", [])
     assert (out["n"], out["Years"], out["Source"]) == (2, [2020, 2021], "Insufficient")
 
 def test_growth_rate_gap():
@@ -198,38 +209,39 @@ def test_growth_rate_gap():
             ((2020, 100.0), (2021, 110.0), (2022, 121.0), (2024, 200.0), (2025, 220.0), (2026, 242.0))}
     out = growth_rate(data)
     
-    assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (0.1, 0.1, 0.1)
+    assert (out["Growth_Rate_Median"], out["Growth_Rate_Mean"], out["Mean_Last_Three"]) == (0.1, 0.1, None)
+    assert (out["Mean_Last_Three_Source"], out["Mean_Last_Three_Years"]) == ("Not_Contiguous", [])
     assert (out["n"], out["Years"], out["Source"]) == (4, [2020, 2021, 2024, 2025], "Calculated")
 
 @pytest.mark.parametrize("symbol", list(ROIC_GOLDEN), ids = list(ROIC_GOLDEN))
 def test_roic_golden(all_data, symbol):
-    median, last, n, ic_last = ROIC_GOLDEN[symbol]
+    median, last, n, ic_last, ic_last_year = ROIC_GOLDEN[symbol]
     out = roic(all_data[symbol])
-    
+
     assert out["ROIC_Median"] == pytest.approx(median, rel = REL)
     assert out["ROIC_Last"] == pytest.approx(last, rel = REL)
     assert out["IC_Last"] == pytest.approx(ic_last, rel = REL)
-    assert (out["n"], out["Source"]) == (n, "Median")
-    
-def test_roic_apple_insuf(all_data):
+    assert (out["n"], out["Source"], out["IC_Last_Year"]) == (n, "Median", ic_last_year)
+    assert len(out["Years"]) == out["n"]
+
+def test_roic_apple_negative_ic_not_sticky(all_data):
     out = roic(all_data["apple"])
-    
-    assert out["ROIC_Median"] is None
-    assert out["ROIC_Last"] is None
-    assert out["IC_Last"] == pytest.approx(39970000000.0, rel = REL)
-    assert (out["n"], out["Source"]) == (3, "Insufficient")
+
+    assert out["Years"] == [2023, 2024, 2025]
+    assert out["Source"] == "Median"
 
 @pytest.mark.parametrize("overrides, flags, expected", [
-    ({},                          None,                      (0.075, 0.075, 1000.0, 4, "Median")),
-    ({2021: {"Equity": -400.0}},  None,                      (None,  None,  1000.0, 3, "Insufficient")),
-    ({2024: {"Debt": None}},      None,                      (0.075, 0.075, None,   3, "Median")),
-    ({},                          {"Equity": ["outlier"]},   (0.075, 0.075, 1000.0, 4, "Median")),
-], ids = ["clean", "negative_ic", "last_year_missing", "flag_ignored"])
+    ({},                          None,                            (0.075, 0.075, 1000.0, 2024, 4, "Median")),
+    ({2021: {"Equity": -400.0}},  None,                            (0.075, 0.075, 1000.0, 2024, 3, "Median")),
+    ({2024: {"Debt": None}},      None,                            (0.075, 0.075, 1000.0, 2023, 4, "Median")),
+    ({},                          {"Equity": ["outlier"]},         (0.075, 0.075, 1000.0, 2024, 4, "Median")),
+    ({},                          {"OperatingIncome": ["outlier"]},(None,  None,  1000.0, 2024, 0, "Insufficient")),
+], ids = ["clean", "negative_ic", "last_year_missing", "yoy_flag_ignored", "oi_flagged"])
 def test_roic_synth(overrides, flags, expected):
     data = {year: row(flags = flags, **{**ROIC_BASE, **overrides.get(year, {})}) for year in range(2020, 2025)}
     out = roic(data)
 
-    assert (out["ROIC_Median"], out["ROIC_Last"], out["IC_Last"], out["n"], out["Source"]) == expected
+    assert (out["ROIC_Median"], out["ROIC_Last"], out["IC_Last"], out["IC_Last_Year"], out["n"], out["Source"]) == expected
 
 @pytest.mark.parametrize("symbol", list(REV_GOLDEN), ids = list(REV_GOLDEN))
 def test_proj_rev_golden(all_data, symbol):
@@ -278,8 +290,10 @@ def test_proj_rev_raises(all_data, short, base, revenue_growth, message):
     with pytest.raises(ValueError, match = message):
         project_revenue(data, YEARS, base, revenue_growth = revenue_growth)
 
-def test_proj_rev_zero_years_unguarded(all_data):
-    assert project_revenue(all_data["apple"], 0) == {}
+@pytest.mark.parametrize("years", [0, -1])
+def test_proj_rev_invalid_years(all_data, years):
+    with pytest.raises(ValueError, match = "Years must be at least 1"):
+        project_revenue(all_data["apple"], years)
 
 def test_fcf_golden(data_result):
     symbol, data = data_result
@@ -354,8 +368,8 @@ def test_fcf_variants(all_data, kwargs, fcf, metrics, margin_base):
 
 @pytest.mark.parametrize("mutation, terminal_roic, kwargs, message", [
     (None, TERMINAL_ROIC, {"margin_base": "Bogus"},                  "Unknown margin_base: Bogus"),
-    (None, TERMINAL_ROIC, {"metrics": {"Bogus": "Driver_Ratio"}},    r"Unkown metric: \['Bogus'\]"),
-    (None, TERMINAL_ROIC, {"metrics": {"D&A": "Bogus"}},             r"Unkown metric: \[\]"),
+    (None, TERMINAL_ROIC, {"metrics": {"Bogus": "Driver_Ratio"}},    r"Unknown metric: \['Bogus'\]"),
+    (None, TERMINAL_ROIC, {"metrics": {"D&A": "Bogus"}},             r"Unknown metric base: \['Bogus'\]"),
     (None, 0.025,         {},                                        "Terminal ROIC must be greater than terminal growth"),
     (None, 0.02,          {},                                        "Terminal ROIC must be greater than terminal growth"),
     (None, TERMINAL_ROIC, {"ebit_margin": "x"},                      "Ebit Margin must be a number or float"),
@@ -374,8 +388,7 @@ def test_fcf_raises(all_data, mutation, terminal_roic, kwargs, message):
     with pytest.raises(ValueError, match = message):
         project_fcf(data, YEARS, terminal_roic, **kwargs)
 
-def test_fcf_zero_years_unguarded(all_data):
-    out = project_fcf(all_data["apple"], 0, TERMINAL_ROIC)
-
-    assert list(out) == [2026]
-    assert (out[2026]["FCF"], out[2026]["Revenue"]) == (0, 0)
+@pytest.mark.parametrize("years", [0, -1])
+def test_fcf_invalid_years(all_data, years):
+    with pytest.raises(ValueError, match = "Years must be at least 1"):
+        project_fcf(all_data["apple"], years, TERMINAL_ROIC)

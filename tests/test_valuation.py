@@ -37,6 +37,7 @@ def test_tv_gordon():
     assert tv["Implied_Multiple"] == pytest.approx(11.0, rel = REL)
     assert tv["Source"] == {"Terminal_Growth": GROWTH}
     assert tv["Method"] == "gordon"
+    assert tv["Implied_Multiple_Source"] == "Calculated"
     
 def test_tv_multiple():
     tv = terminal_value(FCF_ROWS, WACC, "multiple", 8.0, GROWTH)
@@ -45,6 +46,7 @@ def test_tv_multiple():
     assert tv["Implied_Multiple"] == pytest.approx(11.0, rel = REL)
     assert tv["Source"] == {"Multiple": 8.0}
     assert tv["Method"] == "multiple"
+    assert tv["Implied_Multiple_Source"] == "Calculated"
     
 @pytest.mark.parametrize("wacc, method, exit_multiple, growth, message", [
     (0.02,  "gordon",   None, 0.025,  "WACC must be greater than Terminal Growth"),
@@ -56,21 +58,25 @@ def test_tv_raises(wacc, method, exit_multiple, growth, message):
     with pytest.raises(ValueError, match = message):
         terminal_value(FCF_ROWS, wacc, method, exit_multiple, growth)
 
-@pytest.mark.parametrize("wacc, method, exit_multiple, growth", [
-    (WACC, "gordon", None, GROWTH),
-    (WACC, "multiple", 8.0, GROWTH),
+@pytest.mark.parametrize("wacc, method, exit_multiple, growth, terminal", [
+    (WACC, "gordon", None, GROWTH, 1375.0),
+    (WACC, "multiple", 8.0, GROWTH, 0.0),
 ])
-def test_ebitda_zero_unguarded(wacc, method, exit_multiple, growth):
+def test_ebitda_zero(wacc, method, exit_multiple, growth, terminal):
     fcf_alt = {2031: val_dct(110.0, 999.0, 999.0), 2030: val_dct(90.0, 0.0, 0.0)}
-    with pytest.raises(ZeroDivisionError):
-        terminal_value(fcf_alt, wacc, method, exit_multiple, growth)
+    tv = terminal_value(fcf_alt, wacc, method, exit_multiple, growth)
+
+    assert tv["Terminal_Value"] == pytest.approx(terminal, rel = REL)
+    assert tv["Implied_Multiple"] == None
+    assert tv["Implied_Multiple_Source"] == "EBITDA <= 0"
     
-def test_ebitda_neg_unguarded():
+def test_ebitda_neg():
     fcf_alt = {2031: val_dct(110.0, 999.0, 999.0), 2030: val_dct(90.0, -200.0, 25.0)}
     tv = terminal_value(fcf_alt, WACC, "gordon", None, GROWTH)
-    
+
     assert tv["Terminal_Value"] == pytest.approx(1375.0, rel = REL)
-    assert tv["Implied_Multiple"] == pytest.approx(-7.857142857142857, rel = REL)
+    assert tv["Implied_Multiple"] == None
+    assert tv["Implied_Multiple_Source"] == "EBITDA <= 0"
 
 def test_real_fcf(real_fcf):
     wacc, fcf = real_fcf
@@ -79,3 +85,4 @@ def test_real_fcf(real_fcf):
     assert sorted(fcf) == list(range(2026, 2037))
     assert tv["Terminal_Value"] == pytest.approx(2011707660197.802, rel = REL)
     assert tv["Implied_Multiple"] == pytest.approx(9.41545108964314, rel = REL)
+    assert tv["Implied_Multiple_Source"] == "Calculated"

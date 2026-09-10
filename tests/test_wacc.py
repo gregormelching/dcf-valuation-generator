@@ -5,7 +5,7 @@ from database import get_data
 from model import MARGINAL_TAX_RATE
 from prices import risk_free_rate
 from wacc_calculation import (
-    COD_START_YEAR, COD_FALLBACK_START_YEAR, INVESTMENT_GRADE, N_MONTHS,
+    COD_START_YEAR, COD_FALLBACK_START_YEAR, INVESTMENT_GRADE, N_MONTHS, SPREADS,
     synthetic_rating, cost_of_debt, synthetic_cost_of_debt, debt_to_equity,
     adjusted_beta, cost_of_equity, calc_wacc,
 )
@@ -59,10 +59,16 @@ def test_synthetic_rating_bands(coverage, rating, spread):
     out = synthetic_rating(coverage)
     assert (out["Rating"], out["Spread"]) == (rating, spread)
     
-@pytest.mark.parametrize("coverage", [0.1999995, 2.499995, 8.4999995])
-def test_synthetic_rating_gaps(coverage):
-    with pytest.raises(ValueError, match = "outside the spread table"):
-        synthetic_rating(coverage)
+@pytest.mark.parametrize("coverage, rating", [
+    (0.1999995, "D2/D"),
+    (2.499995,  "Ba1/BB+"),
+    (8.4999995, "Aa2/AA"),
+])
+def test_synthetic_rating_no_gaps(coverage, rating):
+    assert synthetic_rating(coverage)["Rating"] == rating
+
+def test_synthetic_rating_bands_are_contiguous():
+    assert all(high == SPREADS[i + 1][0] for i, (low, high, rating, spread) in enumerate(SPREADS[:-1]))
 
 @pytest.mark.parametrize("coverage", [-200000.0, 200000.0])
 def test_synthetic_rating_outside_table(coverage):

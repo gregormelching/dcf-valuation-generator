@@ -75,7 +75,7 @@ def test_clean_values_signs_and_provenance():
 
     assert out["Value"] == pytest.approx(6.0)
     assert (out["Tag"], out["End"], out["Filed"]) == ("A+B", "2025-12-31", "2026-02-01")
-    assert out["Form"] == "10-K"
+    assert out["Form"] == "10-K+10-Q"
     assert out["Receivables"] == slot(10.0, tag = "A", end = "2025-09-30", form = "10-K", filed = "2026-01-01")
     assert out["Inventory"] == {}
 

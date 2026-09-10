@@ -10,13 +10,20 @@ MIN_YEARS = 3
 COMPARATOR_WINDOW = 3
 TERMINAL_GROWTH = 0.025
     
+def flags_clean(data: dict, year: int, metric: str) -> bool:
+    if data[year][metric]["Value"] is None: return False
+    flags = [flag for flag in data[year][metric]["Flag"]]
+    if OUTLIER_RULES[metric][0] == "yoy" and "outlier" in flags: flags.remove("outlier")
+    return len(flags) == 0
+
 def effective_tax_rate(data):
     value = {"Effective_Tax_Rate": 0, "n": 0, "Source": ""}
     rates = []
-    for year in data: 
+    for year in data:
         if year < TAX_WINDOW_START: continue
-        if len(data[year]["Tax"]["Flag"]) != 0 or (data[year]["Tax"]["Value"] is None or data[year]["PretaxIncome"]["Value"] is None):
+        if not flags_clean(data, year, "Tax") or not flags_clean(data, year, "PretaxIncome"):
             continue
+        if data[year]["PretaxIncome"]["Value"] == 0: continue
         tax_rate = data[year]["Tax"]["Value"] / data[year]["PretaxIncome"]["Value"]
         rates.append(tax_rate)
     if len(rates) < MIN_YEARS: 
@@ -27,31 +34,37 @@ def effective_tax_rate(data):
     return value
 
 def driver_ratio(data, metric):
-    value = {"Driver_Ratio": 0, "n": 0, "Source": "", "Mean_Last_Three": 0, "Years": []}
+    value = {"Driver_Ratio": 0, "n": 0, "Source": "", "Mean_Last_Three": 0, "Mean_Last_Three_Source": "", "Mean_Last_Three_Years": [], "Years": []}
     ratios = []
     clean = []
     for year in sorted(data):
-        flags = [flag for flag in data[year][metric]["Flag"]]
-        if data[year][metric]["Value"] is None or data[year]["Revenue"]["Value"] in (0, None): continue
-        if OUTLIER_RULES[metric][0] == "yoy" and "outlier" in flags: 
-            flags.remove("outlier")
-        if len(flags) != 0: continue
-        
+        if data[year]["Revenue"]["Value"] in (0, None): continue
+        if not flags_clean(data, year, metric): continue
+
         d_ratio = data[year][metric]["Value"] / data[year]["Revenue"]["Value"]
         clean.append(year)
         ratios.append(d_ratio)
-        
-    if len(ratios) >= MIN_YEARS: 
+
+    if len(ratios) >= MIN_YEARS:
         median = round(stats.median(ratios), 4)
-        mean = round(stats.mean(ratios[-3:]), 4)
-        value.update({"Driver_Ratio": median, "n": len(ratios), "Source": "Median", "Mean_Last_Three": mean, "Years": clean}) 
-    else: 
-        median = None   
-        value.update({"Driver_Ratio": median, "n": len(ratios), "Source": "Insufficient", "Mean_Last_Three": None, "Years": clean})
+        window = clean[-COMPARATOR_WINDOW:]
+        if window[-1] - window[0] == COMPARATOR_WINDOW - 1:
+            mean = round(stats.mean(ratios[-COMPARATOR_WINDOW:]), 4)
+            mean_source = "Calculated"
+        else:
+            mean = None
+            mean_source = "Not_Contiguous"
+            window = []
+        value.update({"Driver_Ratio": median, "n": len(ratios), "Source": "Median", "Mean_Last_Three": mean, "Mean_Last_Three_Source": mean_source, "Mean_Last_Three_Years": window, "Years": clean})
+    else:
+        median = None
+        value.update({"Driver_Ratio": median, "n": len(ratios), "Source": "Insufficient", "Mean_Last_Three": None, "Mean_Last_Three_Source": "Insufficient", "Mean_Last_Three_Years": [], "Years": clean})
     return value
 
 def rolling_means(pairs, k):
+    if k < 1: raise ValueError(f"Window must be at least 1, got {k}.")
     value = []
+    pairs = sorted(pairs)
     for i in range(len(pairs) - k + 1):
         w = pairs[i:i+k]
         if w[-1][0] - w[0][0] != k - 1: continue
@@ -59,7 +72,7 @@ def rolling_means(pairs, k):
     return value
 
 def growth_rate(data: dict) -> dict:
-    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "n": 0, "Source": "", "Rates": [], "Years": []}
+    value = {"Growth_Rate_Median": 0, "Growth_Rate_Mean": 0, "Mean_Last_Three": 0, "Mean_Last_Three_Source": "", "Mean_Last_Three_Years": [], "n": 0, "Source": "", "Rates": [], "Years": []}
     years = sorted(data)
     growth_rates = []
     clean = []
@@ -75,12 +88,20 @@ def growth_rate(data: dict) -> dict:
     if len (growth_rates) >= MIN_YEARS:
         median = round(stats.median(growth_rates), 4)
         mean = round(stats.mean(growth_rates), 4)
-        mean_last_three = round(stats.mean(growth_rates[-3:]), 4)
-        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "n": len(growth_rates), "Source": "Calculated", "Rates": growth_rates, "Years": clean})
-    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None,"n": len(growth_rates), "Source": "Insufficient", "Rates": growth_rates, "Years": clean})
+        window = clean[-COMPARATOR_WINDOW:]
+        if window[-1] - window[0] == COMPARATOR_WINDOW - 1:
+            mean_last_three = round(stats.mean(growth_rates[-COMPARATOR_WINDOW:]), 4)
+            mean_source = "Calculated"
+        else:
+            mean_last_three = None
+            mean_source = "Not_Contiguous"
+            window = []
+        value.update({"Growth_Rate_Median": median, "Growth_Rate_Mean": mean, "Mean_Last_Three": mean_last_three, "Mean_Last_Three_Source": mean_source, "Mean_Last_Three_Years": window, "n": len(growth_rates), "Source": "Calculated", "Rates": growth_rates, "Years": clean})
+    else: value.update({"Growth_Rate_Median": None, "Growth_Rate_Mean": None, "Mean_Last_Three": None, "Mean_Last_Three_Source": "Insufficient", "Mean_Last_Three_Years": [], "n": len(growth_rates), "Source": "Insufficient", "Rates": growth_rates, "Years": clean})
     return value
   
 def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", terminal_growth: float = TERMINAL_GROWTH, revenue_growth: float | None = None) -> dict:
+    if years < 1: raise ValueError(f"Years must be at least 1, got {years}.")
     last_year = sorted(data)[-1]
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Growth_Rate": 0, "Revenue": 0} for year in projected_years}
@@ -105,13 +126,17 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", te
     return value
 
 def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growth_Rate_Median", margin_base: str = "Driver_Ratio", metrics: dict = None, terminal_growth: float = TERMINAL_GROWTH, nwc_intensity: float | None = None, ebit_margin: float | None = None, revenue_growth: float | None = None) -> dict:
+    if years < 1: raise ValueError(f"Years must be at least 1, got {years}.")
     last_year = sorted(data)[-1]
     if metrics is None: metrics = {}
     keys = metrics.keys()
     
     projected_years = range(last_year + 1, last_year + 1 + years)
     value = {year: {"Revenue": 0, "EBIT": 0, "NOPAT": 0, "D&A": 0, "CapEx": 0, "dNWC": 0, "FCF": 0, "EBIT_Margin": "", "Reinvestment": 0, "Reinvestment_Rate": 0, "Terminal_ROIC": 0, "Tax_Rate": 0} for year in range(last_year + 1, last_year + 2 + years)}
-    if any(key not in ["D&A", "NWC", "CapEx"] or metrics[key] not in ["Driver_Ratio", "Mean_Last_Three"] for key in keys): raise ValueError(f"Unkown metric: {[key for key in keys if key not in ["D&A", "NWC", "CapEx"]]}")
+    unknown_keys = [key for key in keys if key not in ["D&A", "NWC", "CapEx"]]
+    if unknown_keys: raise ValueError(f"Unknown metric: {unknown_keys}")
+    unknown_values = [metrics[key] for key in keys if metrics[key] not in ["Driver_Ratio", "Mean_Last_Three"]]
+    if unknown_values: raise ValueError(f"Unknown metric base: {unknown_values}")
     if margin_base not in ["Driver_Ratio", "Mean_Last_Three", "Last"]: raise ValueError(f"Unknown margin_base: {margin_base}")
     
     last_OI = data[last_year]["OperatingIncome"]
@@ -195,40 +220,34 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
     return value
     
 def roic(data: dict) -> dict:
-    value = {"ROIC_Median": 0, "ROIC_Last": 0, "IC_Last": 0, "n": 0, "Source": ""}
-    dct = {}
+    value = {"ROIC_Median": 0, "ROIC_Last": 0, "IC_Last": 0, "IC_Last_Year": None, "n": 0, "Source": "", "Years": []}
+    ic = {}
+    nopat = {}
     t = effective_tax_rate(data)["Effective_Tax_Rate"]
     roics = []
-    source = "Median"
-    
+    clean = []
+
     for year in sorted(data):
-        debt = data[year]["Debt"]["Value"]
-        cash = data[year]["Cash"]["Value"]
-        equity = data[year]["Equity"]["Value"]
-        opinc = data[year]["OperatingIncome"]["Value"]
-        vals = [debt, cash, equity, opinc]
-        nos = [None]
-        if any(map(lambda v: v in vals, nos)): continue
-        
-        ic = debt + equity - cash
-        nopat = opinc * (1 - t)
-        dct[year] = {"IC": ic, "NoPat": nopat}
-    
-    for year in dct:
-        if year-1 not in dct.keys(): continue
-        if dct[year-1]["IC"] <= 0:
-            source = "Insufficient"
-            continue
-        roic_t = dct[year]["NoPat"] / dct[year-1]["IC"]
-        roics.append(roic_t)
-    if len(roics) >= MIN_YEARS and source != "Insufficient": 
+        if all(flags_clean(data, year, m) for m in ["Debt", "Cash", "Equity"]):
+            ic[year] = data[year]["Debt"]["Value"] + data[year]["Equity"]["Value"] - data[year]["Cash"]["Value"]
+        if flags_clean(data, year, "OperatingIncome"):
+            nopat[year] = data[year]["OperatingIncome"]["Value"] * (1 - t)
+
+    for year in sorted(nopat):
+        if year-1 not in ic or ic[year-1] <= 0: continue
+        roics.append(nopat[year] / ic[year-1])
+        clean.append(year)
+    if len(roics) >= MIN_YEARS:
         median = stats.median(roics)
         last = roics[-1]
+        source = "Median"
     else:
         median = None
         last = None
-        
-    value.update({"ROIC_Median": median, "ROIC_Last": last, "IC_Last": dct.get(max(data), {}).get("IC"), "n": len(roics), "Source": source})    
+        source = "Insufficient"
+
+    ic_last_year = max(ic) if ic else None
+    value.update({"ROIC_Median": median, "ROIC_Last": last, "IC_Last": ic.get(ic_last_year), "IC_Last_Year": ic_last_year, "n": len(roics), "Source": source, "Years": clean})
     return value
 
 if __name__ == "__main__":

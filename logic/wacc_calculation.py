@@ -10,27 +10,27 @@ EQUITY_RISK_PREMIUM = 0.0428
 COD_START_YEAR = 2023
 COD_FALLBACK_START_YEAR = 2018
 SPREADS = [
-    (-100000.0, 0.199999, "D2/D", 0.1900),
-    (0.2, 0.649999, "C2/C", 0.1600),
-    (0.65, 0.799999, "Ca2/CC", 0.1261),
-    (0.8, 1.249999, "Caa/CCC", 0.0885),
-    (1.25, 1.499999, "B3/B-", 0.0509),
-    (1.5, 1.749999, "B2/B", 0.0321),
-    (1.75, 1.999999, "B1/B+", 0.0275),
-    (2.0, 2.2499999, "Ba2/BB", 0.0184),
-    (2.25, 2.49999, "Ba1/BB+", 0.0138),
-    (2.5, 2.999999, "Baa2/BBB", 0.0111),
-    (3.0, 4.249999, "A3/A-", 0.0089),
-    (4.25, 5.499999, "A2/A", 0.0078),
-    (5.5, 6.499999, "A1/A+", 0.0070),
-    (6.5, 8.499999, "Aa2/AA", 0.0055),
+    (-100000.0, 0.2, "D2/D", 0.1900),
+    (0.2, 0.65, "C2/C", 0.1600),
+    (0.65, 0.8, "Ca2/CC", 0.1261),
+    (0.8, 1.25, "Caa/CCC", 0.0885),
+    (1.25, 1.5, "B3/B-", 0.0509),
+    (1.5, 1.75, "B2/B", 0.0321),
+    (1.75, 2.0, "B1/B+", 0.0275),
+    (2.0, 2.25, "Ba2/BB", 0.0184),
+    (2.25, 2.5, "Ba1/BB+", 0.0138),
+    (2.5, 3.0, "Baa2/BBB", 0.0111),
+    (3.0, 4.25, "A3/A-", 0.0089),
+    (4.25, 5.5, "A2/A", 0.0078),
+    (5.5, 6.5, "A1/A+", 0.0070),
+    (6.5, 8.5, "Aa2/AA", 0.0055),
     (8.5, 100000.0, "Aaa/AAA", 0.0040),
 ]
 INVESTMENT_GRADE = 2.5
 
 def synthetic_rating(coverage: float) -> dict:
     for low, high, rating, spread in SPREADS:
-        if low <= coverage <= high:
+        if low <= coverage < high:
             return {"Rating": rating, "Spread": spread, "Source": "Damodaran large cap"}
     raise ValueError(f"Coverage ratio {coverage} outside the spread table.")
 

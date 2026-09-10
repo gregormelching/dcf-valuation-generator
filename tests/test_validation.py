@@ -87,13 +87,14 @@ def test_reconcile_missing_own_value():
 
     assert out == {2020: {}}
 
-def test_reconcile_zero_revenue_unguarded():
-    with pytest.raises(ZeroDivisionError):
-        reconcile_working_capital({2020: pyear(Revenue = 0.0)}, {2020: ryear()})
+def test_reconcile_zero_revenue_skipped():
+    assert reconcile_working_capital({2020: pyear(Revenue = 0.0)}, {2020: ryear()}) == {2020: {}}
 
-def test_reconcile_missing_year_unguarded():
-    with pytest.raises(KeyError):
-        reconcile_working_capital({2020: pyear(), 2021: pyear()}, {2020: ryear()})
+def test_reconcile_missing_year_skipped():
+    out = reconcile_working_capital({2020: pyear(), 2021: pyear()}, {2020: ryear()})
+
+    assert out[2021] == {}
+    assert sorted(out[2020]) == ["Implicit", "Own", "Residuum", "Residuum_pct"]
 
 @pytest.mark.parametrize("rec_wc, expected", [
     ({2020: {}},                                                     ["recon_unchecked"]),

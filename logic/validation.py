@@ -56,8 +56,10 @@ def reconcile_working_capital(values: dict, recon_values: dict) -> dict:
     reconciled = {year: {} for year in values}
     
     for year in values:
+        if year not in recon_values: continue
         needed = [recon_values[year]["NetIncome"], recon_values[year]["OCF"], values[year]["D&A"], recon_values[year]["SBC"], values[year]["WorkingCapital"], recon_values[year]["DeferredTaxes"], values[year]["Revenue"]]
         if any("Value" not in c for c in needed): continue
+        if needed[6]["Value"] == 0: continue
         
         NetIncome = needed[0]["Value"]
         Ocf = needed[1]["Value"]

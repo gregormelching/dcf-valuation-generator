@@ -26,7 +26,7 @@ HORIZON_BOUNDS = (1, 30)
 HORIZON_COMPARATOR = 15
 HORIZON_ANCHOR = 15
 HORIZON_WIDE_BOUNDS = (1, 100)
-HORIZON_WIDE_REQUIRED = {"boeing": 63, "procter_gamble": 94}
+HORIZON_WIDE_REQUIRED = {"boeing": 63, "procter_gamble": 92}
 GROWTH_NARROW_BOUNDS = (-0.5, 1.0)
 GROWTH_NARROW_SYMBOL = "tesla"
 
@@ -37,13 +37,15 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.004157942544885411,
         "Margin_Range": (0.2881, 0.311, 0.31970799762591884),
+        "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "boeing": {
-        "Percentiles": {0.05: 15.248428138828391, 0.25: 32.06959660816732, 0.5: 45.87207167403301, 0.75: 61.11895578073862, 0.95: 82.89884078172176},
-        "Mean": 47.277310931820935,
+        "Percentiles": {0.05: 44.77937891680399, 0.25: 54.11905495816991, 0.5: 62.473696065334295, 0.75: 73.3693891565621, 0.95: 91.0387784393851},
+        "Mean": 64.56851169479144,
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.005015380997594274,
-        "Margin_Range": (0.0186, 0.0478521847020556, 0.0698),
+        "Margin_Range": (0.0478521847020556, 0.0478521847020556, 0.0698),
+        "Margin_Bases_Used": ["Driver_Ratio", "Last"],
     },
     "microsoft": {
         "Percentiles": {0.05: 283.63379664802875, 0.25: 306.205569372218, 0.5: 322.7371639237955, 0.75: 343.1881302978105, 0.95: 374.3588931167545},
@@ -51,20 +53,23 @@ MC_GOLDEN = {
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.004902805237750883,
         "Margin_Range": (0.4168, 0.4568, 0.4678081840892722),
+        "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "procter_gamble": {
-        "Percentiles": {0.05: 111.29796297264421, 0.25: 121.82697978837552, 0.5: 130.23697222400176, 0.75: 141.2925639298535, 0.95: 159.17228728114924},
-        "Mean": 132.45788612686601,
-        "P_Above_Market": 0.1905,
+        "Percentiles": {0.05: 111.32431423505759, 0.25: 121.85319190801319, 0.5: 130.2634996179467, 0.75: 141.3188554032251, 0.95: 159.1989734959426},
+        "Mean": 132.48427043587378,
+        "P_Above_Market": 0.191,
         "WACC_Sigma": 0.0037599663784301704,
         "Margin_Range": (0.2211, 0.2301, 0.2301),
+        "Margin_Bases_Used": ["Driver_Ratio", "Last", "Mean_Last_Three"],
     },
     "tesla": {
-        "Percentiles": {0.05: 15.18281696008148, 0.25: 16.736233495784997, 0.5: 18.3049895700006, 0.75: 20.305798421934632, 0.95: 23.73032097667353},
-        "Mean": 18.73482152266893,
+        "Percentiles": {0.05: 14.587373379212872, 0.25: 15.740314897491007, 0.5: 16.65026336451219, 0.75: 17.865441500428535, 0.95: 19.998274639755714},
+        "Mean": 16.91739084274296,
         "P_Above_Market": 0.0,
         "WACC_Sigma": 0.012612017977356962,
-        "Margin_Range": (0.04592573845001951, 0.04592573845001951, 0.0953),
+        "Margin_Range": (0.04592573845001951, 0.04592573845001951, 0.0632),
+        "Margin_Bases_Used": ["Driver_Ratio", "Last"],
     },
 }
 
@@ -112,13 +117,13 @@ GOLDEN = {
         "Capital_Turnover": 0.7844028746894307
     },
     "procter_gamble": {
-        "Value_Per_Share": 131.79067292750094,
+        "Value_Per_Share": 131.81716957527263,
         "WACC": 0.06860383894985718,
-        "EV": 330534597152.33014,
-        "Low": 159.43447402137065,
-        "High": 112.12405019947484,
+        "EV": 330596186836.38983,
+        "Low": 159.46148830357436,
+        "High": 112.15004818113552,
         "Implied_Multiple": 13.39994806860309,
-        "TV_Share": 0.6456210727606307,
+        "TV_Share": 0.6455007943077117,
         "Data_Filed": "2026-08-04",
         "RF_Date": "2026-08-19",
         "EBIT_Margin_Start": 0.22690504641970768,
@@ -129,8 +134,8 @@ GOLDEN = {
         "COD_Year": 2026,
         "COD_N": 11,
         "ROIC_Consistency": "Consistent",
-        "Implicit_ROIC": 0.20798970628721578,
-        "Capital_Turnover": 1.2052134219163597
+        "Implicit_ROIC": 0.2079815531181916,
+        "Capital_Turnover": 1.205166177709353
     },
     "tesla": {
         "Value_Per_Share": 15.70870332668901,
@@ -208,13 +213,13 @@ LEVER_GOLDEN = {
         "Subset_Reachable": False,
     },
     "procter_gamble": {
-        "Ceiling_Value_Per_Share": 380.13807356519374,
+        "Ceiling_Value_Per_Share": 380.1666487279857,
         "Reachable": True,
         "Dominant": "terminal_growth",
-        "Contribution": {"ebit_margin": -0.04204876536215352, "wacc_offset": 127.18472525139629, "terminal_growth": 197.49781942338032, "nwc_intensity": 0.11768265864031946, "revenue_growth": 48.69958483564699},
-        "Required": {"ebit_margin": 0.254995722019965, "wacc_offset": -0.003741321563905657, "terminal_growth": 0.030303482669126254, "nwc_intensity": -0.5, "revenue_growth": 0.04794444444444444},
+        "Contribution": {"ebit_margin": -0.04204993181787131, "wacc_offset": 127.18528484514843, "terminal_growth": 197.4972286423456, "nwc_intensity": 0.11768265864031946, "revenue_growth": 48.70167885259036},
+        "Required": {"ebit_margin": 0.25494210114201066, "wacc_offset": -0.00373414645476252, "terminal_growth": 0.030296961309272293, "nwc_intensity": -0.5, "revenue_growth": 0.04792857142857143},
         "Closable": ['revenue_growth', 'terminal_growth', 'wacc_offset'],
-        "Subset_Ceiling": 159.46979785779106,
+        "Subset_Ceiling": 159.49681105682365,
         "Subset_Reachable": True,
     },
     "tesla": {
@@ -270,9 +275,9 @@ HORIZON_GOLDEN = {
         "Status": "unreachable",
         "Direction": "up",
         "Best_Year": 30,
-        "Best_Value": 137.28497315491944,
-        "Anchor": 133.4334396342254,
-        "Gap": -0.08826931757094636,
+        "Best_Value": 137.35272671868182,
+        "Anchor": 133.47224713971778,
+        "Gap": -0.08808601319728815,
     },
     "tesla": {
         "Required_Years": None,
@@ -660,6 +665,7 @@ def test_margin_range(mc_result):
     assert val["Margin_Range"][0] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][0], rel = REL)
     assert val["Margin_Range"][1] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][1], rel = REL)
     assert val["Margin_Range"][2] == pytest.approx(MC_GOLDEN[sym]["Margin_Range"][2], rel = REL)
+    assert val["Margin_Bases_Used"] == MC_GOLDEN[sym]["Margin_Bases_Used"]
 
 @pytest.mark.slow    
 def test_wacc_sigma(mc_result):

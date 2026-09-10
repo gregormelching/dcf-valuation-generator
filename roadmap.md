@@ -4016,6 +4016,135 @@ Reihenfolge für den Durchgang: 2, 6 und 3 zuerst, weil sie Zahlen im Ergebnis b
 9, 10 danach, weil sie nur Fehlerbilder und Meldungen betreffen. Als Nächstes steht laut
 Phasenreihenfolge Phase 4 an, das Output-Interface.
 
+#### Fix-Durchgang, Punkt 2 — `Implied_Multiple` gegen EBITDA <= 0 — DONE
+
+Erster der zehn gesammelten Punkte aus Phase 6. Suite bleibt bei **385 grün in 86 s**, alle fünf
+Golden `Implied_Multiple` unverändert — genau das war die Bedingung, unter der der Fix richtig ist.
+
+**Die Roadmap hatte den Anlass falsch beschrieben.** Punkt 2 nannte Boeing den realen Kandidaten für
+EBITDA <= 0. Nachgemessen ist das falsch: im letzten expliziten Jahr steht Boeing bei 1,279e10, der
+schlechteste erreichbare Fall über `margin_base = "Mean_Last_Three"` bei 7,709e9, und selbst am
+unteren Rand von `IMPLIED_MARGIN_BOUNDS` (`ebit_margin = 0.0`) bleiben 4,479e9, weil D&A die Zahl
+abstützt. Keiner der fünf Titel kommt unter irgendeinem dokumentierten Hebel in die Nähe der Null.
+Der Fix ist damit Prophylaxe plus Trennung von Diagnose und Ergebnis, nicht die Reparatur eines
+aktiven Bugs.
+
+**Der Guard sitzt auf der Diagnosezahl, nicht auf dem Terminal Value.** `Implied_Multiple` wird in
+`terminal_value` vor dem `method`-Block entschieden: bei `ebitda > 0` der Quotient und
+`Implied_Multiple_Source = "Calculated"`, sonst `None` und `"EBITDA <= 0"`. Ein `raise` an der Stelle
+hätte `method = "multiple"` einen legitimen Terminal Value gekostet — `exit_multiple` mal null ist
+null, mal negativ ist negativ, beides korrekte Ergebnisse der gewählten Methode, die mit dem
+Gordon-Quotienten nichts zu tun haben. Der Test pinnt deshalb `Terminal_Value` 1375,0 für gordon und
+0,0 für multiple 8,0 im Zero-Fall.
+
+**Die Grenze ist `<= 0`, nicht `== 0`.** Der Negativ-Fall gab vorher -7,857 zurück. Eine negative
+Zahl sieht in einer Tabelle plausibel aus und liest sich als "billig" — genau der Fall, den die
+Konvention "kein plausibler Default für fehlende Daten" ausschließt. Die beiden Tests, die den
+Zustand vorher als `unguarded` festhielten, sind entsprechend umgeschrieben.
+
+**Benennung nach dem Muster `TV_Share` / `TV_Share_Source`** aus `dcf_value`: Zahl darf `None` sein,
+der Grund steht im Nachbarkey. Ein Marker im `Source`-Dict von `terminal_value` wäre nicht
+angekommen, weil `dcf_value` unter demselben Namen etwas völlig anderes führt, den zusammengesetzten
+String `wacc_source+growth_source+method`. Der neue Key läuft durch `dcf_value` und durch beide
+Zweige von `sensitivity_grid`, `sensitivity_table` und `nwc_scenario` — ohne das letzte Stück zeigte
+eine Zelle `Implied_Multiple: None` bei `Status: "calculated"` und wäre von der `except`-Zeile
+daneben nicht zu unterscheiden.
+
+**Nebenfund, und der wiegt schwerer als der Fix selbst: `sensitivity_table` und `nwc_scenario` werden
+von keinem Test aufgerufen.** Ein Tippfehler beim Durchreichen (`dcf[wacc]` statt `wacc`, ein Dict als
+Dict-Key) hat beide Funktionen vollständig getötet, `TypeError` beim ersten Aufruf, und die Suite
+blieb grün. Aufgefallen ist es nur durch einen manuellen Aufruf gegen die Fixture. Die Phase-6-Bilanz
+"385 grün" deckt das Output-nahe Ende von `valuation.py` also nicht ab. Gehört vor Phase 4
+nachgezogen, weil das Output-Interface genau auf diesen beiden Funktionen aufsetzt.
+
+**Nächster Punkt im Durchgang ist 3** (`Mean_Last_Three` ist nicht kontingent), danach 6 (`roic`).
+Die Reihenfolge 2, 3, 6 statt der ursprünglich notierten 2, 6, 3, weil `roic` über
+`effective_tax_rate` an denselben Daten hängt und die Golden Values sonst zweimal nachgezogen werden.
+
+#### Fix-Durchgang, Punkte 1 und 3 bis 10 — DONE
+
+Der Rest der Liste in einem Durchgang, wie geplant: erst 3, dann 6, dann die sieben, die nur
+Fehlerbilder betreffen. Suite von 385 auf **391 grün in 94 s**. Bewegt haben sich Zahlen bei genau
+einer Firma im Basisfall (Procter & Gamble) und bei drei Firmen in Monte Carlo.
+
+**Punkt 3 — `Mean_Last_Three` prüft jetzt Kontiguität.** `driver_ratio` und `growth_rate` mitteln nur
+noch, wenn die letzten `COMPARATOR_WINDOW` sauberen Jahre lückenlos sind; sonst `None`. Beide
+Funktionen führen dazu `Mean_Last_Three_Source` und `Mean_Last_Three_Years`. Betroffen sind
+ausschließlich `OperatingIncome` bei Boeing (2018, 2022, 2023) und Tesla (2022, 2024, 2025) — Apple,
+Microsoft und P&G haben lückenlose Endfenster, entgegen der ursprünglichen Notiz, die Apple als
+teuersten Fall nannte. `Mean_Last_Three_Years` ist absichtlich getrennt von `Years`: `Years` ist das
+Fenster des Medians, und zwei verschieden gefensterte Kennzahlen unter einem Fensterschlüssel sind
+genau der Zustand, den die Konvention verbietet.
+
+**Verworfen wurde die Alternative, auf das letzte kontingente Fenster auszuweichen.** `rolling_means`
+könnte das liefern, gibt bei Boeing aber 0,0995 aus 2016-2018 — Boeing vor 737 MAX, acht Jahre alt,
+als Margin-Treiber einer Bewertung per 2026. Eine Zahl, die so heißt wie das Fenster, das sie nicht
+hat, ist der plausible Default, den die Konvention ausschließt.
+
+**Folgeänderung in `monte_carlo`:** die Schleife über `MARGIN_BASES` fing nichts ab und wäre bei
+Boeing und Tesla ab dem Fix jedes Mal gestorben. Sie überspringt eine Basis jetzt, die konfigurierte
+Basis-Margin dagegen wirft — fehlt die, ist die Verteilung nicht mehr um den Basisfall zentriert. Das
+Ergebnis führt `Margin_Bases_Used`, sonst stünde dort ein Zweier-Intervall ohne Hinweis, dass es aus
+drei Kandidaten entstanden ist.
+
+**Das kostet Boeing und Tesla ihr breitestes Margenband, und die Wirkung ist groß.** Boeings
+MC-Median steigt von 45,87 auf 62,47, weil die gestrichene Zahl (0,0186) der untere Rand war; Teslas
+fällt von 18,30 auf 16,65, weil dort 0,0953 der obere war. Beide Bänder sind danach schmaler. Das ist
+eine echte Nebenwirkung, keine Verbesserung: die Verteilung wird selbstsicherer, ohne dass neue
+Evidenz dazugekommen wäre. Das Gegenargument, auf dem die Entscheidung steht: eine Zahl aus einem
+kaputten Fenster ist keine Evidenz für einen Rand, sie sah nur wie eine aus.
+
+**Punkt 6 — `roic` filtert jetzt pro Komponente statt pro Jahr.** Die Kopplung war der eigentliche
+Fund: `IC` hängt an Debt, Equity und Cash, `NoPat` an OperatingIncome, und ein Jahresfilter über alle
+vier hätte Boeings `IC_Last` auf 2023 zurückgeworfen, obwohl nur das OperatingIncome 2025 geflaggt
+ist. Getrennt gefiltert bleiben alle fünf `IC_Last`-Werte unverändert. Die Flag-Regel folgt
+`driver_ratio`: bei `yoy`-Metriken wird `outlier` toleriert, bei `margin_change_pp` nicht — dafür
+steht die Prüfung jetzt einmal in `flags_clean` statt dreimal inline. Dazu: `Insufficient` ist nicht
+mehr klebrig, `IC_Last` kommt aus dem letzten Jahr mit brauchbarem IC statt aus `max(data)`, und
+`IC_Last_Year` macht sichtbar, welches Jahr das war.
+
+**Neuer Fund, und er gehört auf die nächste Liste: `roic` liefert jetzt absurde Zahlen, wo es vorher
+schwieg.** Apple kommt auf `ROIC_Median` 16,17, Boeing auf 2,84 — beides echte Quotienten, weil das
+Invested Capital dieser Jahre knapp über null liegt (Apple 2022: 1,6 Mrd bei rund 100 Mrd NOPAT). Der
+alte klebrige `Insufficient`-Zweig hat das zufällig maskiert. Ein Schwellwert wäre eine
+Finanzannahme, keine Aufräumarbeit, und gehört deshalb entschieden statt nebenbei eingebaut.
+`ROIC_Median` und `ROIC_Last` gehen heute in keine Bewertung ein, nur `IC_Last` — der Schaden ist
+vorerst auf die Diagnose begrenzt.
+
+**Punkt 4 — `effective_tax_rate` prüft beide Positionen.** Der Flag auf `PretaxIncome` wurde ignoriert
+und ein Nenner von null lief in einen `ZeroDivisionError`. Das trifft P&G: 2019 trägt `outlier` auf
+`PretaxIncome`, fällt jetzt heraus, und die Steuerquote geht von 0,2034 (n=7) auf 0,2026 (n=6). Das
+ist die einzige Bewegung im Basisfall überhaupt — Value_Per_Share 131,79 auf 131,82, EV 330,53 auf
+330,60 Mrd, dazu Lever-, Horizon- und MC-Goldens. Boeing verliert ein Jahr (n=2 auf n=1), bleibt aber
+beim Fallback 0,25.
+
+**Punkt 1 — `SPREADS` ist lückenlos.** Jedes `high` ist das `low` des nächsten Bandes, der Vergleich
+ist `low <= coverage < high`. Damit landet 2,4999 in Ba1/BB+ statt im Nichts, und die drei Tests, die
+die Lücken als `raise` festhielten, prüfen jetzt das Gegenteil plus die Kontiguität der Tabelle. Eine
+Coverage von exakt 100000,0 wirft ab sofort, weil das oberste Band rechts offen verglichen wird —
+absurd genug, dass die ehrliche Fehlermeldung die richtige Antwort ist.
+
+**Punkte 5, 7, 8 — Guards und Meldungen.** `rolling_means` wirft bei `k < 1` und sortiert selbst,
+statt Sortierung stillschweigend vorauszusetzen. `project_revenue` und `project_fcf` werfen bei
+`years < 1`, statt `{}` beziehungsweise eine Nullzeile zurückzugeben. Die Metrikprüfung in
+`project_fcf` ist in zwei Checks getrennt: ein falscher Key nennt den Key, ein falscher Wert nennt
+den Wert — vorher meldete letzterer `Unkown metric: []`, Tippfehler inklusive.
+
+**Punkt 9 — `reconcile_working_capital`.** Jahre, die nur in `values` stehen, und Jahre mit Umsatz
+null werden übersprungen statt in `KeyError` beziehungsweise `ZeroDivisionError` zu laufen. Beide
+landen als leeres Jahres-Dict im Ergebnis, und `check_recon_tolerance` macht daraus von selbst
+`recon_unchecked` — Absenz bleibt sichtbar, ohne dass eine zweite Meldung nötig wäre.
+
+**Punkt 10 — `clean_values`.** `Form` ist jetzt die Verkettung der eindeutigen Formen statt
+`forms[0]`. Hinter dem `10-K`-Filter in `get_values` ändert das nichts; wird der Filter je gelockert,
+behauptet die Aggregatzeile nicht länger eine Form, die nur einer ihrer Bestandteile hat.
+
+**Offen bleibt aus dem letzten Schritt: `sensitivity_table` und `nwc_scenario` haben keinen einzigen
+Test.** Ein Tippfehler beim Durchreichen hat beide getötet, und die Suite blieb grün. Das ist die
+Lücke, die vor Phase 4 zu schließen ist, weil das Output-Interface genau auf diesen beiden Funktionen
+aufsetzt. Zusammen mit dem `roic`-Schwellwert sind das die zwei offenen Punkte, mit denen Phase 4
+startet.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

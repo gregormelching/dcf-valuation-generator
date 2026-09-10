@@ -86,6 +86,13 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, te
     gordon_tv = fcf[tv_row]["FCF"] / (wacc - terminal_growth)
     ebitda = fcf[last_explicit]["EBIT"] + fcf[last_explicit]["D&A"]
     
+    if ebitda > 0: 
+        imp_mul = gordon_tv / ebitda
+        imp_mul_source = "Calculated"
+    else:
+        imp_mul = None
+        imp_mul_source = "EBITDA <= 0"
+    
     if method == "gordon":
         tv = gordon_tv
         source = {"Terminal_Growth": terminal_growth}
@@ -95,7 +102,7 @@ def terminal_value(fcf: dict, wacc: float, method: str, exit_multiple: float, te
         source = {"Multiple": exit_multiple}
     else: raise ValueError("Invalid method.")
     
-    return {"Terminal_Value": tv, "Implied_Multiple": gordon_tv / ebitda, "Method": method, "Source": source}
+    return {"Terminal_Value": tv, "Implied_Multiple": imp_mul, "Implied_Multiple_Source": imp_mul_source, "Method": method, "Source": source}
     
 
 def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base: str = None, method: str = "gordon", exit_multiple: float | None = None, as_of: str | None = None, terminal_roic: float | None = None, margin_base: str | None = None, metrics: dict | None = None, terminal_growth: float = TERMINAL_GROWTH, wacc_offset: float = 0.0, nwc_intensity: float | None = None, ebit_margin: float | None = None, revenue_growth: float | None = None) -> dict:
@@ -168,7 +175,7 @@ def dcf_value(symbol: str, start_year: int, years: int, freq: str, n: int, base:
 
         growth_source = fcf[min(fcf)]["Growth_Rate_Source"]
         
-        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Source": f"{wacc_source}+{growth_source}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "Capital_Turnover": fcf[max(fcf)]["Capital_Turnover"], "Implicit_ROIC": fcf[max(fcf)]["Implicit_ROIC"], "ROIC_Consistency": roic_consistency, "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"], "Terminal_Growth_Source": tg_source, "Revenue_Growth": revenue_growth, "Revenue_Growth_Source": growth_source}
+        value[w[0]] = {"EV": ev, "Equity_Value": equity, "Value_Per_Share": value_per_share, "PV_Explicit": PV_Explicit, "PV_TV": PV_tv, "WACC": w[1], "Implied_Multiple": tv["Implied_Multiple"], "Implied_Multiple_Source": tv["Implied_Multiple_Source"], "Source": f"{wacc_source}+{growth_source}+{method}", "Stub_Years": stub, "As_Of": datetime.strftime(as_of, "%Y-%m-%d"), "Terminal_ROIC": t_roic, "ROIC_Source": roic_source, "Margin_Base": fcf[min(fcf)]["Margin_Base"], "EBIT_Margin_Target": fcf[max(fcf)]["EBIT_Margin"], "EBIT_Margin_Start": fcf[min(fcf)]["Margin_Start"], "Margin_Start_Year": fcf[min(fcf)]["Margin_Start_Year"], "Margin_Start_Source": fcf[min(fcf)]["Margin_Start_Source"], "Capital_Turnover": fcf[max(fcf)]["Capital_Turnover"], "Implicit_ROIC": fcf[max(fcf)]["Implicit_ROIC"], "ROIC_Consistency": roic_consistency, "TV_Share_Source": tv_share_source, "Metrics": fcf[min(fcf)]["Metrics"], "TV_Share": tv_share, "Data_Filed": data_filed, "Terminal_Growth": terminal_growth, "WACC_Offset": wacc_offset, "Market_Price": market_price, "Price_Date": price_date, "Price_Age_Days": price_age, "Upside": value_per_share / market_price - 1, "NWC_Intensity": nwc_intensity, "RF_Date": wacc_calc["RF_Date"], "COD_Basis": wacc_calc["COD_Basis"], "COD_Alternative": wacc_calc["COD_Alternative"], "COD_Evidence": wacc_calc["COD_Evidence"], "MCap_Price_Date": wacc_calc["MCap_Price_Date"], "MCap_Price_Age_Days": wacc_calc["MCap_Price_Age_Days"], "Terminal_Growth_Source": tg_source, "Revenue_Growth": revenue_growth, "Revenue_Growth_Source": growth_source}
         
     return value
 
@@ -182,6 +189,7 @@ def sensitivity_grid(symbol: str, start_year: int, years: int, freq: str, n: int
                 dct = {
                     "Value_Per_Share": dcf["wacc"]["Value_Per_Share"],
                     "Implied_Multiple": dcf["wacc"]["Implied_Multiple"],
+                    "Implied_Multiple_Source": dcf["wacc"]["Implied_Multiple_Source"],
                     "TV_Share": dcf["wacc"]["TV_Share"],
                     "WACC": dcf["wacc"]["WACC"],
                     "Terminal_Growth": g,
@@ -192,6 +200,7 @@ def sensitivity_grid(symbol: str, start_year: int, years: int, freq: str, n: int
                 dct = {
                     "Value_Per_Share": None,
                     "Implied_Multiple": None,
+                    "Implied_Multiple_Source": None,
                     "TV_Share": None,
                     "WACC": None,
                     "Terminal_Growth": g,
@@ -214,6 +223,7 @@ def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: in
                 "Value_Per_Share": wacc["Value_Per_Share"],
                 "EBIT_Margin_Target": wacc["EBIT_Margin_Target"],
                 "Implied_Multiple": wacc["Implied_Multiple"],
+                "Implied_Multiple_Source": wacc["Implied_Multiple_Source"],
                 "TV_Share": wacc["TV_Share"],
                 "TV_Share_Source": wacc["TV_Share_Source"],
                 "Market_Price": wacc["Market_Price"],
@@ -228,6 +238,7 @@ def sensitivity_table(symbol: str, start_year: int, years: int, freq: str, n: in
                 "Value_Per_Share": None,
                 "EBIT_Margin_Target": None,
                 "Implied_Multiple": None,
+                "Implied_Multiple_Source": None,
                 "TV_Share": None,
                 "TV_Share_Source": None,
                 "Market_Price": None,
@@ -256,6 +267,7 @@ def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as
                 "Value_Per_Share": wacc["Value_Per_Share"],
                 "EBIT_Margin_Target": wacc["EBIT_Margin_Target"],
                 "Implied_Multiple": wacc["Implied_Multiple"],
+                "Implied_Multiple_Source": wacc["Implied_Multiple_Source"],
                 "TV_Share": wacc["TV_Share"],
                 "TV_Share_Source": wacc["TV_Share_Source"],
                 "Market_Price": wacc["Market_Price"],
@@ -270,6 +282,7 @@ def nwc_scenario(symbol: str, start_year: int, years: int, freq: str, n: int, as
                 "Value_Per_Share": None,
                 "EBIT_Margin_Target": None,
                 "Implied_Multiple": None,
+                "Implied_Multiple_Source": None,
                 "TV_Share": None,
                 "TV_Share_Source": None,
                 "Market_Price": None,
@@ -295,12 +308,16 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     margins = {}
     
     for mb in MARGIN_BASES:
-        dcf_mb = dcf_value(symbol, start_year, years, freq, n, margin_base = mb, as_of = as_of)
+        try:
+            dcf_mb = dcf_value(symbol, start_year, years, freq, n, margin_base = mb, as_of = as_of)
+        except ValueError:
+            continue
         margins[mb] = dcf_mb["wacc"]["EBIT_Margin_Target"]
-        
+
+    if ASSUMPTIONS[symbol]["margin_base"] not in margins: raise ValueError(f"{symbol}: margin base {ASSUMPTIONS[symbol]["margin_base"]} is not available.")
     m_low = min(margins.values())
     m_high = max(margins.values())
-    m_mode = margins[ASSUMPTIONS[symbol]["margin_base"]]    
+    m_mode = margins[ASSUMPTIONS[symbol]["margin_base"]]
     rng = random.Random(seed)
     values = []    
     fails = {}
@@ -333,9 +350,10 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     draws_ok = len(values)
     draws_failed = sum(fails.values())
     margin_range = (m_low, m_mode, m_high)
+    margin_bases_used = sorted(margins)
     d = list(values)
     
-    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
+    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Margin_Bases_Used": margin_bases_used, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
 
 def _lever_value(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None, key: str, x: float) -> float | None:
     try:
