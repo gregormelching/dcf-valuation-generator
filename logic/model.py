@@ -122,7 +122,7 @@ def project_revenue(data: dict, years: int, base: str = "Growth_Rate_Median", te
         i += 1
         g_t = round(growth + (terminal_growth - growth) * i/len(projected_years), 4)
         rev *= (1 + g_t)
-        value[year].update({"Growth_Rate": g_t, "Revenue": rev, "Source": base})
+        value[year].update({"Growth_Rate": g_t, "Growth_Rate_Base": growth, "Revenue": rev, "Source": base})
     
     return value
 
@@ -200,7 +200,7 @@ def project_fcf(data: dict, years: int, terminal_roic: float, base: str = "Growt
         acc_net_reinvest += net_reinvest
         fcf = nopat - net_reinvest
         rrate = net_reinvest / nopat if nopat != 0 else None
-        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str, "Reinvestment": net_reinvest, "Reinvestment_Rate": rrate, "Growth_Rate_Source": rev[year]["Source"]})
+        value[year].update({"Revenue": cur_rev, "EBIT": ebit, "NOPAT": nopat, "D&A": da, "CapEx": capex, "dNWC": dnwc, "FCF": fcf, "EBIT_Margin": m_t, "Tax_Rate": t_t, "Margin_Base": margin_base, "Margin_Start": LAST_EBIT_MARGIN, "Margin_Start_Year": last_year, "Margin_Start_Source": MARGIN_START_SOURCE, "Metrics": da_str+"+"+cap_ex_str+"+"+nwc_str, "Reinvestment": net_reinvest, "Reinvestment_Rate": rrate, "Growth_Rate_Source": rev[year]["Source"], "DA_Margin": D_AND_A_MARGIN, "CapEx_Margin": CAP_EX_MARGIN, "NWC_Intensity": NWC_INTENSITY, "Revenue_Growth": rev[year]["Growth_Rate_Base"]})
         prev_rev = cur_rev
         
         if i == years:

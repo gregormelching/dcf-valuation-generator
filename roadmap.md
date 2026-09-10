@@ -4235,6 +4235,72 @@ Annahmen-Block in Phase 4 ist das zu wenig — dort muss stehen, welche Intensit
 nicht ob sie überschrieben war. Gleiches Muster wie `Revenue_Growth`, das ebenfalls nur den Override
 trägt.
 
+#### Phase 4, Schritt 1 und 2 — Effektivwerte im Modell, Serialisierungsschicht
+
+Suite bei **412 grün in 88 s**, keine Bewertungszahl bewegt sich. Der Schritt hat zwei Teile, die
+nur zusammen Sinn ergeben.
+
+**Der Anlass.** `dcf_value` meldete `NWC_Intensity: None` im Basisfall — der Key trug den Override,
+nicht die gerechnete Intensität. Dasselbe bei `Revenue_Growth`. D&A- und CapEx-Marge tauchten im
+Ergebnis überhaupt nicht auf: `project_fcf` berechnete sie aus `driver_ratio` und warf sie weg. Ein
+Annahmen-Panel ist damit nicht schreibbar.
+
+**Erster Teil, `model.py` und `valuation.py`.** `project_revenue` führt jetzt `Growth_Rate_Base` in
+jeder Zeile, `project_fcf` zusätzlich `DA_Margin`, `CapEx_Margin`, `NWC_Intensity` und
+`Revenue_Growth` — die Terminalzeile bekommt sie nicht, dort steht `EBIT_Margin` bereits als
+Zielmarge. In `dcf_value` heißen die alten Override-Keys jetzt `NWC_Intensity_Override` und
+`Revenue_Growth_Override`; die freigewordenen Namen tragen den Effektivwert aus `fcf[min(fcf)]`,
+dazu `DA_Margin` und `CapEx_Margin`. Neu ist auch `Projection`: die vollständige FCF-Tabelle des
+jeweiligen WACC-Zweigs.
+
+Die Alternative wäre gewesen, die Effektivwerte in der Serialisierung nachzurechnen. Verworfen: die
+Auflösung von `metrics` samt Default `Driver_Ratio` stünde dann an zwei Stellen und würde driften —
+das Dashboard zeigte irgendwann eine Annahme an, die das Modell nicht gerechnet hat. Aus demselben
+Grund gibt `dcf_value` die Projektion heraus, statt die Serialisierung `project_fcf` ein zweites Mal
+aufrufen zu lassen; sie müsste dafür `terminal_roic` selbst auflösen.
+
+Gemessen, `as_of = "2026-08-19"`, Fenster 2016 bis 2025 bzw. 2026:
+
+| Firma | NWC_Intensity | DA_Margin | CapEx_Margin | Revenue_Growth |
+|---|---|---|---|---|
+| apple | -0,0882 | 0,0291 | 0,0278 | 0,0630 |
+| boeing | 0,2211 | 0,0258 | 0,0287 | 0,1226 |
+| microsoft | -0,0840 | 0,0635 | 0,2533 | 0,1461 |
+| procter_gamble | -0,0227 | 0,0348 | 0,0450 | 0,0260 |
+| tesla | -0,0052 | 0,0508 | 0,0990 | 0,0560 |
+
+**Zweiter Teil, `logic/serialize.py` mit `serialize_company`.** Eine Funktion, ein Dict pro Firma,
+fünfzehn Top-Level-Keys: `Symbol`, `As_Of`, `Status`, `Blocks_Failed` und elf Blöcke — `Headline`,
+`Assumptions`, `Provenance`, `Quality`, `Projection`, `Grid`, `Margin_Table`, `NWC_Table`,
+`Implied`, `Ceiling`, `Horizon`. Die Key-Menge ist im Erfolgs- und im Fehlerfall identisch, damit
+das Template nicht zwei Formen kennen muss.
+
+Vier Entscheidungen, die nicht offensichtlich sind:
+
+- Die Quelle wird nie in der Serialisierung hergeleitet. `project_fcf` setzt `margin_base` und
+  `nwc_str` schon auf `"Override"`, wenn überschrieben wurde. Eine zweite Ableitung aus den
+  `_Override`-Keys erzeugte zwei Wahrheiten über dieselbe Zeile.
+- `Assumptions` ist eine Liste von zehn Dicts mit `Label`, `Value`, `Unit`, `Source`, kein Dict. Die
+  Reihenfolge im Panel ist eine inhaltliche Entscheidung und darf nicht von der Sortierung im
+  Template abhängen.
+- Die sechs teuren Blöcke haben je ein eigenes `except ValueError` und tragen ihren Namen in
+  `Blocks_Failed` ein. Ein gemeinsames `try` machte aus einer fehlenden NWC-Ratio eine Seite ohne
+  Sensitivitätsgitter.
+- Keine Formatierung, nur Zahlen und Quellen. Prozentzeichen, Tausendertrenner und Vorzeichenfarbe
+  entstehen im Template — sonst testet man Strings statt Werte.
+
+Zwei Fallen, die beim Bauen aufgetreten sind und im Code stehen bleiben: `Source` in `dcf_value` hat
+eine **variable** Segmentzahl, Boeing liefert `"1mo+2023+Mean_Last_Three+gordon"`, weil die
+COD-Quelle ein Jahr mitführt — die WACC-Zeile nimmt deshalb alles bis auf die letzten zwei Segmente,
+nicht das erste. Und die Terminalzeile der Projektion führt an `D&A`, `CapEx` und `dNWC` `None`; das
+bleibt `None`, `0` behauptete, sie seien modelliert worden.
+
+**Der Monte Carlo bleibt draußen.** Gemessen für Apple bei warmem Cache: `monte_carlo` kostet 14,0 s
+von 17,9 s Gesamtlaufzeit, weil er `dcf_value` 2000-mal aufruft. `serialize_company` liegt damit bei
+1,7 bis 5,0 s je Firma. Er bekommt in Phase 4 eine eigene Funktion und einen eigenen Endpunkt, den
+die Seite nachlädt — sonst kostet jeder Request 18 statt 4 Sekunden.
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
