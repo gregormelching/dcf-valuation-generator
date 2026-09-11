@@ -4419,14 +4419,29 @@ deshalb auf ein Ergebnis mit `Draws_OK = 0` und prüft nicht den Monte Carlo, so
 Absenzbehandlung in der Serialisierung — ohne Guard liefe `Percentiles[MC_MEDIAN]` dort in einen
 `TypeError`.
 
-**Offen, bewusst so gelassen: `As_Of` ist im MC-Panel der Eingabewert, im Company-Panel der
-aufgelöste** aus `wacc["As_Of"]`. `monte_carlo` führt den Stichtag nicht mit, obwohl es `dcf_value`
-in seiner ersten Zeile ohnehin aufruft. Bei `as_of = "2026-08-19"` ist das dasselbe, bei
-`as_of = None` nicht: das Company-Panel liefert ein Datum, das MC-Panel `None`. Die Tests sind zu
-beidem agnostisch, weil sie den Stichtag explizit übergeben. Solange die Seite beide Endpunkte mit
-demselben expliziten `as_of` aufruft, ist die Asymmetrie folgenlos; sobald sie es einmal nicht tut,
-kann sie zwei Stichtage nebeneinander anzeigen, ohne dass es auffällt. Der Fix wäre ein Key in
-`monte_carlo`, `valuation.py`.
+**Die `As_Of`-Asymmetrie ist geschlossen.** `monte_carlo` in `valuation.py` führt jetzt
+`As_Of` aus `dcf["wacc"]["As_Of"]` — den `dcf_value`-Lauf macht es in seiner ersten Zeile ohnehin,
+der Key kostet nichts. `serialize_monte_carlo` nimmt den Stichtag von dort statt aus dem Parameter,
+womit beide Panels denselben aufgelösten Wert liefern. Vorher gab das MC-Panel bei `as_of = None`
+`None` zurück, während das Company-Panel ein Datum lieferte; eine Seite, die beide Endpunkte
+nacheinander ruft, hätte zwei Stichtage nebeneinander anzeigen können, ohne dass es auffällt.
+
+**Was der Test davon belegt und was nicht.** `test_as_of_comes_from_the_result` prüft, dass
+`monte_carlo` den Key überhaupt führt und die Serialisierung ihn von dort nimmt — fällt der Key weg,
+bricht der Test mit `KeyError`. Den eigentlichen Unterschied kann er nicht zeigen: gegen die
+Fixture-Datenbank ist `as_of = None` nicht erreichbar, die gecachten Preise sind dort 21 Tage alt und
+beide Funktionen laufen in die Staleness-Schranke aus Schritt 16. Der Fall ist also durch Konstruktion
+gefixt, nicht durch Messung.
+
+#### Phase 4 — die zwei Entscheidungen für die Ausgabeschicht
+
+**Flask.** Zwei GET-Routen und ein Template; FastAPI wäre für diesen Umfang Overhead, und der
+Monte-Carlo-Endpunkt braucht kein async, weil die 12 s Rechenzeit CPU-gebunden sind und nicht auf IO
+warten. Gehört vor dem ersten Template-Schritt in `requirements.txt`.
+
+**`mock_design.html` im Root ist der Zielentwurf, kein verworfener Zwischenstand.** Der Stil der
+Seite richtet sich danach. Hier festgehalten, weil die Datei bis hierher in keinem Roadmap-Eintrag
+vorkam und ihr Status damit nur im Kopf existierte.
 
 **Damit ist die Datenseite von Phase 4 fertig.** Zwei Funktionen, zwei Endpunkte, 120 Tests über
 beide. Als Nächstes das Template — Formatierung, Prozentzeichen, Tausendertrenner und

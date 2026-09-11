@@ -365,7 +365,7 @@ def monte_carlo(symbol: str, start_year: int, years: int, freq: str, n: int, as_
     else: mode_position = "Interior"
     d = list(values)
     
-    return {"Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Margin_Bases_Used": margin_bases_used, "Median_Offset": median_offset, "Mode_Position": mode_position, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
+    return {"As_Of": dcf["wacc"]["As_Of"], "Percentiles": percentiles, "Mean": mean, "P_Above_Market": p_above_market, "Draws_OK": draws_ok, "Draws_Failed": draws_failed, "WACC_Sigma": sigma, "Margin_Range": margin_range, "Margin_Bases_Used": margin_bases_used, "Median_Offset": median_offset, "Mode_Position": mode_position, "Base_Value_Per_Share": vps, "Market_Price": mp, "WACC": wacc, "Seed": seed, "Failures": fails, "Draws": d}
 
 def _lever_value(symbol: str, start_year: int, years: int, freq: str, n: int, as_of: str | None, key: str, x: float) -> float | None:
     try:

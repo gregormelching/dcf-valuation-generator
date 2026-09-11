@@ -129,7 +129,7 @@ def serialize_monte_carlo(symbol: str, start_year: int, years: int, freq: str, n
     
     return {
         "Symbol": symbol,
-        "As_Of": as_of,
+        "As_Of": mc["As_Of"],
         "Status": "calculated",
         "Distribution": distribution,
         "Offset": {

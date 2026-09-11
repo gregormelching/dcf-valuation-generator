@@ -23,7 +23,7 @@ MODE_GOLDEN = {"apple": "Interior", "boeing": "Min", "microsoft": "Interior",
                "procter_gamble": "Max", "tesla": "Min"}
 EMPTY_FAILURES = {"WACC must be greater than Terminal Growth.": 7}
 EMPTY_RESULT = {
-    "Percentiles": None, "Mean": None, "P_Above_Market": None, "Draws_OK": 0, "Draws_Failed": 7,
+    "As_Of": AS_OF, "Percentiles": None, "Mean": None, "P_Above_Market": None, "Draws_OK": 0, "Draws_Failed": 7,
     "WACC_Sigma": 0.004, "Margin_Range": (0.1, 0.2, 0.3), "Margin_Bases_Used": ["Driver_Ratio"],
     "Median_Offset": None, "Mode_Position": "Interior", "Base_Value_Per_Share": 100.0,
     "Market_Price": 200.0, "WACC": 0.09, "Seed": SEED, "Failures": EMPTY_FAILURES, "Draws": [],
@@ -52,6 +52,11 @@ def test_top_level_shape(symbol, panels):
     assert panel["Symbol"] == symbol
     assert panel["As_Of"] == AS_OF
     assert panel["Status"] == "calculated"
+
+@pytest.mark.parametrize("symbol", sorted(ASSUMPTIONS))
+def test_as_of_comes_from_the_result(symbol, panels, raws):
+    assert raws[symbol]["As_Of"] == AS_OF
+    assert panels[symbol]["As_Of"] == raws[symbol]["As_Of"]
 
 @pytest.mark.parametrize("symbol", sorted(ASSUMPTIONS))
 def test_block_shapes(symbol, panels):
