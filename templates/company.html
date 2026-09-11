@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block content %}
+{% set ok = panel.Status == "calculated" %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{ panel.Symbol }}</h1>
+    <p class="page-sub">
+      as of {{ panel.As_Of }}{% if ok %} &middot; filed {{ panel.Provenance.Data_Filed }}{% endif %}
+    </p>
+  </div>
+  {% if ok %}
+    <span class="badge is-positive">calculated</span>
+  {% else %}
+    <span class="badge is-negative">failed</span>
+  {% endif %}
+</div>
+
+{% if not ok %}
+  <div class="card">{{ panel.Status }}</div>
+{% else %}
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">Value per share</div>
+      <div class="stat-value">{{ panel.Headline.Value_Per_Share | money }}</div>
+      <div class="stat-delta {% if panel.Headline.Upside is none %}{% elif panel.Headline.Upside >= 0 %}is-positive{% else %}is-negative{% endif %}">
+        {{ panel.Headline.Upside | signed }} vs. market
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Market price</div>
+      <div class="stat-value">{{ panel.Headline.Market_Price | money }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Enterprise value</div>
+      <div class="stat-value">{{ panel.Headline.EV | money }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">WACC</div>
+      <div class="stat-value">{{ panel.Headline.WACC | pct }}</div>
+      <div class="stat-delta">{{ panel.Headline.WACC_Low | pct }} &ndash; {{ panel.Headline.WACC_High | pct }}</div>
+    </div>
+  </div>
+
+  <section class="panel">
+    <h2 class="panel-title">Assumptions</h2>
+    <table class="kv-table">
+      <tbody>
+        {% for row in panel.Assumptions %}
+          <tr>
+            <td>{{ row.Label }}</td>
+            <td class="num">{{ row.Value | pct }}</td>
+            <td class="src">{{ row.Source }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2 class="panel-title">Provenance</h2>
+    <table class="kv-table">
+      <tbody>
+        <tr><td>Data filed</td><td class="num">{{ panel.Provenance.Data_Filed }}</td></tr>
+        <tr><td>Price date</td><td class="num">{{ panel.Provenance.Price_Date }}</td></tr>
+        <tr>
+          <td>Price age</td>
+          <td class="num">
+            {% if panel.Provenance.Price_Age_Days >= 14 %}
+              <span class="badge is-warning">{{ panel.Provenance.Price_Age_Days }} d</span>
+            {% else %}
+              {{ panel.Provenance.Price_Age_Days }} d
+            {% endif %}
+          </td>
+        </tr>
+        <tr><td>Risk-free date</td><td class="num">{{ panel.Provenance.RF_Date }}</td></tr>
+        <tr><td>Cost of debt basis</td><td class="src">{{ panel.Provenance.COD_Basis }}</td></tr>
+        <tr><td>Cost of debt alternative</td><td class="num">{{ panel.Provenance.COD_Alternative | pct }}</td></tr>
+        <tr><td>Market cap price date</td><td class="num">{{ panel.Provenance.MCap_Price_Date }}</td></tr>
+        <tr><td>Market cap price age</td><td class="num">{{ panel.Provenance.MCap_Price_Age_Days }} d</td></tr>
+        <tr><td>Stub years</td><td class="num">{{ panel.Provenance.Stub_Years | round(4) }}</td></tr>
+        <tr><td>Source</td><td class="src">{{ panel.Provenance.Source }}</td></tr>
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+{% endblock %}

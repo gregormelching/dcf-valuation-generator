@@ -4448,6 +4448,81 @@ beide. Als Nächstes das Template — Formatierung, Prozentzeichen, Tausendertre
 Vorzeichenfarbe entstehen dort, die Serialisierung liefert bewusst nur Zahlen und Quellen.
 
 
+#### Phase 4, Schritt 5 — die Flask-Schicht, Grundgerüst
+
+`app.py`, `templates/` und `static/` im Projektwurzelverzeichnis. Zwei Routen, drei Jinja-Filter, ein
+Context Processor, drei Templates, zwei Stylesheets, zehn Schriftdateien. Drei der elf Blöcke sind
+gerendert: `Headline`, `Assumptions`, `Provenance`. Die Testsuite ist unberührt, es gibt bisher keine
+Tests auf die Ausgabeschicht.
+
+**Was `mock_design.html` tatsächlich ist.** Kein statisches HTML, sondern ein gebundeltes Artifact:
+392 Zeilen Loader, dahinter ein 1,4-MB-Manifest mit React, ReactDOM, Babel-standalone und 20
+woff2-Dateien. Der `<body>` ist leer bis auf `<div id="root">`. Inhaltlich ist es ein
+Broker-Dashboard ("Ledger", Holdings-Tabelle, New-Order-Modal), null Überschneidung mit den Blöcken
+aus `serialize_company`. Es ist die **Stilvorlage**, nicht die Layoutvorlage — das Markup lässt sich
+nicht übernehmen, weil dort alles in React-Inline-Style-Objekten steckt und keine einzige CSS-Klasse
+existiert.
+
+Übernommen wurde das Designsystem vollständig: Farbrampen (Indigo, Slate, Green, Red, Amber), die
+Rollentokens in hell und dunkel, Typo-, Space-, Radius-, Schatten- und Motion-Tokens. Die sechs
+verstreuten `:root`-Blöcke des Mocks sind in `static/tokens.css` zu einem zusammengezogen, die zwei
+Dark-Blöcke ebenfalls — sonst überschreiben sich Schatten und Farben aus verschiedenen Stellen.
+
+**Die Schriften liegen lokal, nicht auf einem CDN.** DM Sans und IBM Plex Mono, aus dem Manifest
+extrahiert: 10 Dateien, 184 KB, 16 `@font-face`-Regeln. Nur `latin` und `latin-ext`; Cyrillic, Greek
+und Vietnamese sind weggelassen, für englische Labels und deutsche Umlaute totes Gewicht im Repo.
+DM Sans normal ist eine Variable-Font-Datei und deckt 400 bis 700 aus einer Datei ab, daher 16 Regeln
+auf 10 Dateien. Der Grund gegen Google Fonts ist derselbe wie überall sonst im Projekt: Cache-DB,
+Fixture-DB und Staleness-Schranken machen es offline-fähig, eine CDN-Abhängigkeit widerspricht dem.
+
+**`DEFAULT_AS_OF` ist ein Datum, nicht `None`, und das ist keine Bequemlichkeit.** Ohne Stichtag nimmt
+das Modell heute und prüft den neuesten Kurs im Cache dagegen — der ist vom 21.08.2026, also 21 Tage
+alt bei einer Grenze von 14, und die Staleness-Schranke aus Schritt 16 greift. Mit `as_of = None`
+zeigen **alle fünf** Firmen die Fehlerkarte. Der Stichtag kommt aus `?as_of=`, mit
+`request.args.get("as_of") or DEFAULT_AS_OF`: `or` statt `is None`, weil `?as_of=` den leeren String
+liefert und nicht `None`.
+
+**Der Geldfilter wählt die Skala über den Betrag.** Der `Headline`-Block führt zwei Größenordnungen —
+`Value_Per_Share` 128,17 in Dollar je Aktie, `EV` 1.860.146.063.224,25 in absoluten Dollar. Ein fester
+Suffix kann beides nicht; `MONEY_SCALES = ((1e12, "T"), (1e9, "B"), (1e6, "M"))` mit `abs()` beim
+Vergleich, sonst fällt jeder negative Wert durch alle Stufen.
+
+**Die Grenze davon gehört notiert, weil sie später beißt:** Auto-Skalierung macht zwei Zahlen in
+derselben Spalte unvergleichbar, eine Zeile zeigt "B", die nächste "M", und das Auge liest die
+Ziffern. Für die vier StatCards ist das folgenlos, jede steht für sich. Sobald die Projektionstabelle
+eine Geldspalte bekommt, braucht diese Spalte **eine** feste Skala für alle Zeilen — dann ein zweiter
+Filter mit explizitem Faktor.
+
+Gemessen, `as_of = "2026-08-19"`, gegen die Live-DB:
+
+| Firma | Value per share | Market price | Enterprise value | WACC | Upside |
+|---|---|---|---|---|---|
+| apple | $128.17 | $305.93 | $1.86 T | 9,03 % | -58,10 % |
+| boeing | $50.43 | $231.67 | $71.46 B | 8,04 % | -78,23 % |
+| microsoft | $328.36 | $494.47 | $2.37 T | 9,16 % | -33,59 % |
+| procter_gamble | $131.82 | $144.55 | $330.60 B | 6,86 % | -8,81 % |
+| tesla | $15.71 | $342.27 | $23.04 B | 11,26 % | -95,41 % |
+
+Antwortzeit 2 bis 4,5 s je Seite, blockierend gerendert. Das ist für ein lokales Werkzeug in Ordnung;
+der Grund für den getrennten Monte-Carlo-Endpunkt war der Faktor 4 darauf, nicht die Blockierung an
+sich. Es wird nichts zwischengespeichert, jeder Aufruf rechnet neu.
+
+**Zwei Template-Regeln, die aus der Serialisierung kommen und dort schon begründet sind:** die
+Erfolgsprüfung ist `Status == "calculated"` und nicht `Blocks_Failed` — im Fehlerzweig sind
+`Headline`, `Assumptions` und `Provenance` ebenfalls `None` und stehen dort nicht drin. Und
+`Assumptions` wird ohne `|sort` iteriert, weil die Reihenfolge Teil der Daten ist; `Provenance` ist
+dagegen ein Dict und wird zeilenweise ausgeschrieben, eine Schleife über `.items()` würde die
+Reihenfolge dem Zufall überlassen.
+
+`COD_Evidence` bleibt vorerst draußen. Es ist selbst ein Dict (`Rating`, `Coverage`, `Year`, `n`,
+`Realised`) und stünde sonst roh als `{'Rating': 'Aaa/AAA', ...}` in einer Zelle.
+
+**Offen für die nächsten Schritte:** der Monte-Carlo-Endpunkt samt Nachladen im Browser, und die
+restlichen sieben Blöcke — `Projection`, `Grid`, `Margin_Table`, `NWC_Table`, `Implied`, `Ceiling`,
+`Horizon`. Das Sensitivitätsgitter und die Projektionstabelle sind die beiden, die eine eigene
+Darstellungsentscheidung brauchen; die anderen fünf sind Tabellen wie `Assumptions`.
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

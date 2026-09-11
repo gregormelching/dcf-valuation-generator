@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DCF</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand">DCF<span>Valuation</span></div>
+    {% for s in symbols %}
+      <a class="nav-link {% if s == request.view_args.get('symbol') %}is-active{% endif %}"
+         href="{{ url_for('company', symbol=s) }}">{{ s }}</a>
+    {% endfor %}
+  </nav>
+  <main class="main">{% block content %}{% endblock %}</main>
+</div>
+</body>
+</html>

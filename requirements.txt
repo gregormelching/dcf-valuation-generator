@@ -32,3 +32,4 @@ wcwidth==0.8.2
 websockets==17.0.1
 xlrd==2.0.2
 yfinance==1.5.2
+Flask==3.1.3
