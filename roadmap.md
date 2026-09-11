@@ -4301,6 +4301,138 @@ von 17,9 s Gesamtlaufzeit, weil er `dcf_value` 2000-mal aufruft. `serialize_comp
 die Seite nachlädt — sonst kostet jeder Request 18 statt 4 Sekunden.
 
 
+#### Phase 4, Schritt 3 — die Serialisierungsschicht gepinnt — DONE
+
+`tests/test_serialize.py`, 63 Tests, Suite von 407 auf **475 grün in 101 s**. Damit hat die letzte
+Schicht ohne Test eine, und zwar die, die fast nur aus Durchreichen besteht — genau die Fehlerklasse,
+die beim `dcf[wacc]`-Tippfehler zwei Funktionen getötet und die Suite grün gelassen hat.
+
+**Die Form ist die Aussage, nicht die Zahl.** Bewertungszahlen stehen schon in `test_golden_values.py`
+und `test_tables.py`; hier wird dreimal gegen den nackten `dcf_value`-Lauf verglichen (Headline,
+Projektion, Gittermitte) und ansonsten die Struktur geprüft. `TOP_KEYS` ist eine einzige Konstante,
+gegen die beide Rückgabezweige laufen — zwei getrennte Listen würden auseinanderlaufen, sobald ein
+Block dazukommt, und die Identität der Key-Menge ist die Zusage, auf der das Template steht.
+
+**Der Fehlerzweig ist über zwei echte Auslöser erreichbar,** nicht über einen Monkeypatch:
+`years = 0` trifft den Guard in `project_fcf` ("Years must be at least 1, got 0."), `start_year =
+2024` die Datenlage ("Insufficient Data"). Beide geben dieselben fünfzehn Keys zurück, elf davon
+`None`.
+
+**Der Blockfehler dagegen muss erzwungen werden.** Alle fünf Firmen liefern `Blocks_Failed == []`;
+über echte Daten ist keiner der sechs `except`-Zweige erreichbar. `test_block_failure_is_isolated`
+patcht `serialize.plausible_ceiling` auf eine werfende Funktion und prüft, dass genau `Ceiling` auf
+`None` fällt, `Status` bei `"calculated"` bleibt und die anderen fünf Blöcke stehen. Ohne den Test
+wäre nicht belegt, dass eine fehlende NWC-Ratio eine Seite ohne Gitter erzeugt statt einer kaputten
+Seite.
+
+**Zwei Fallen, gegen die eigens gepinnt wurde:**
+
+- **Die WACC-Zeile schneidet die letzten zwei Segmente, nicht das erste.** `Source` hat variable
+  Segmentzahl, boeing liefert `"1mo+2023+Mean_Last_Three+gordon"`, weil die COD-Quelle ein Jahr
+  mitführt. `WACC_SOURCE_GOLDEN` pinnt boeing auf `"1mo+2023"` und die anderen vier auf `"1mo"`.
+- **Die Gitterorientierung wird über jede Zelle geprüft, nicht über die Mitte.** Bei zwei Achsen mit
+  je fünf Elementen und dem Basisfall mittig ist die Mitte gegen eine Transposition invariant. Die
+  Mitte selbst wird über `offsets.index(0.0)` und `growths.index(TERMINAL_GROWTH)` gefunden, nicht
+  als `[2][2]`, damit der Test eine Änderung der Achsenkonstanten überlebt.
+
+**Der teuerste Fund beim Schreiben: die Quellenstrings allein reichen nicht.** `serialize.py`
+zerlegt `Metrics` positional in `[0]`, `[1]`, `[2]` für D&A, CapEx, NWC. Ein Test, der dieselbe
+Zerlegung benutzt, prüft nichts, also wird die erwartete Quelle unabhängig aus
+`ASSUMPTIONS[symbol]["metrics"]` mit Default `"Driver_Ratio"` aufgelöst. Das reicht aber immer noch
+nicht: bei apple und procter_gamble sind alle drei Quellen identisch, bei boeing und microsoft sind
+Position 0 und 2 identisch (`Driver_Ratio+Mean_Last_Three+Driver_Ratio`). Ein D&A-NWC-Tausch wäre
+über die Quellen bei **keiner** der fünf Firmen sichtbar. Gefangen wird er erst über den Wert:
+`driver_ratio(data, metric)[source]`, weil 0,0258 und 0,2211 sich unterscheiden. Beide Assertions
+stehen deshalb nebeneinander.
+
+**Laufzeit:** zwei sessionweite Fixtures, `panels` und `bases`, je fünf Aufrufe, dazu der eine
+gepatchte Lauf. 19,5 s für das Modul allein. Ein Aufruf pro Test statt pro Session hätte es auf
+mehrere Minuten gebracht.
+
+**Offen, gehört ins Template, nicht in die Serialisierung:** im Fehlerzweig listet `Blocks_Failed`
+nur die sechs teuren Blöcke, `Headline`, `Assumptions`, `Provenance`, `Quality` und `Projection`
+sind ebenfalls `None` und stehen nicht drin. Und `As_Of` trägt dort den Eingabewert, im Erfolgsfall
+den aufgelösten aus `wacc["As_Of"]` — bei `as_of = None` gibt der Fehlerzweig `None` zurück, der
+Erfolgsfall ein Datum. Das Template darf `Blocks_Failed` deshalb nicht als Ja-Nein-Prüfung dafür
+benutzen, ob eine Headline existiert; die Prüfung ist `Status == "calculated"`.
+
+**Nächster Punkt in Phase 4 ist der Monte Carlo als eigene Funktion in `serialize.py`** mit eigenem
+Endpunkt, wie in Schritt 1 und 2 notiert. Danach das Template.
+
+
+#### Phase 4, Schritt 4 — der Monte Carlo als eigener Endpunkt — DONE
+
+`serialize_monte_carlo` in `logic/serialize.py`, dazu `tests/test_serialize_mc.py` mit 57 Tests.
+Suite von 475 auf **532 grün in 129 s**. Keine Bewertungszahl bewegt sich, `MC_GOLDEN` bleibt
+unverändert.
+
+**Warum eine zweite Funktion und nicht ein zwölfter Block.** Gemessen bei warmem Cache und 2000
+Ziehungen: `monte_carlo` kostet 12,2 bis 13,1 s je Firma, `serialize_company` liegt komplett bei 1,7
+bis 5,0 s. In einem Panel zusammengelegt kostete jeder Request 18 statt 4 Sekunden. Die Seite lädt
+den Monte Carlo nach.
+
+**Acht Top-Level-Keys: `Symbol`, `As_Of`, `Status`, `Distribution`, `Offset`, `Inputs`,
+`Reliability`, `Draws`.** Kein `Blocks_Failed` — anders als bei `serialize_company` gibt es hier
+keine unabhängig scheiternden Teile, der Lauf gelingt ganz oder gar nicht. Die beiden Funktionen
+haben damit bewusst verschiedene Formen; ein gemeinsamer Schlüssel, der bei der einen immer leer
+ist, verleitet das Template dazu, ihn als Erfolgsprüfung zu benutzen. Die Prüfung ist bei beiden
+`Status == "calculated"`.
+
+Drei Entscheidungen, die nicht offensichtlich sind:
+
+- **`Distribution` ist eine Liste aus `Percentile`/`Value`, kein Dict.** `monte_carlo` gibt
+  `Percentiles` mit Float-Keys heraus, und Float-Keys überleben keine JSON-Serialisierung — aus
+  `0.05` wird `"0.05"`, das Template müsste zurückparsen. Dazu derselbe Grund wie bei `Assumptions`:
+  die Reihenfolge ist eine inhaltliche Entscheidung und darf nicht von der Sortierung im Template
+  abhängen.
+- **`Margin_Range` wird in `Margin_Low`, `Margin_Mode`, `Margin_High` aufgelöst.** Ein Dreiertupel
+  trägt seine Bedeutung positional, und ein Leser liest die Mitte als Mitte. Bei Boeing und Tesla
+  sitzt der Modus aber auf dem Minimum, bei Procter & Gamble auf dem Maximum. Genau diesen Irrtum
+  soll `Mode_Position` verhindern, und ein unaufgelöstes Tupel daneben stellt ihn wieder her.
+- **`Draws` geht roh und ungebinnt heraus.** 2000 Floats sind rund 36 KB, für einen nachgeladenen
+  Request nichts. Eine Binanzahl wäre eine Darstellungsentscheidung und gehört nach der Konvention
+  aus Schritt 2 ins Template.
+
+**`Draws_Requested` kommt aus dem Parameter, nicht aus dem Ergebnis.** `monte_carlo` führt nur
+`Draws_OK` und `Draws_Failed`. Ohne den dritten Wert ist im Panel nicht unterscheidbar, ob 2000
+angefordert und 2000 gelungen sind oder 5000 angefordert und 2000 gelungen — Absenz bliebe
+unsichtbar.
+
+**Die Tests laufen mit `draws = 200`, nicht 2000.** Die 2000er-Zahlen sind in `MC_GOLDEN` gepinnt;
+ein zweites Pinnen derselben Werte kostete 126 s und brächte nichts. Verglichen wird gegen einen
+frischen `monte_carlo`-Lauf mit identischem `seed`, nicht gegen Konstanten — geprüft wird das
+Durchreichen, nicht die Arithmetik. Das Modul kostet so 14 s.
+
+Gemessen bei `draws = 200`, `seed = 12345`, `as_of = "2026-08-19"`:
+
+| Firma | Median | Median_Offset | Mode_Position | Margin_Low / Mode / High |
+|---|---|---|---|---|
+| apple | 126,355172 | -0,0142 | Interior | 0,2881 / 0,3110 / 0,319708 |
+| boeing | 60,471560 | +0,1992 | Min | 0,047852 / 0,047852 / 0,0698 |
+| microsoft | 320,817230 | -0,0230 | Interior | 0,4168 / 0,4568 / 0,467808 |
+| procter_gamble | 130,337682 | -0,0112 | Max | 0,2211 / 0,2301 / 0,2301 |
+| tesla | 16,469635 | +0,0484 | Min | 0,045926 / 0,045926 / 0,0632 |
+
+`Draws_OK` ist bei allen fünf 200, `Draws_Failed` null. Der Fehlerzähler ist damit über echte Daten
+nicht erreichbar, bei 200 wie bei 2000 Ziehungen; `test_empty_distribution` patcht `monte_carlo`
+deshalb auf ein Ergebnis mit `Draws_OK = 0` und prüft nicht den Monte Carlo, sondern die
+Absenzbehandlung in der Serialisierung — ohne Guard liefe `Percentiles[MC_MEDIAN]` dort in einen
+`TypeError`.
+
+**Offen, bewusst so gelassen: `As_Of` ist im MC-Panel der Eingabewert, im Company-Panel der
+aufgelöste** aus `wacc["As_Of"]`. `monte_carlo` führt den Stichtag nicht mit, obwohl es `dcf_value`
+in seiner ersten Zeile ohnehin aufruft. Bei `as_of = "2026-08-19"` ist das dasselbe, bei
+`as_of = None` nicht: das Company-Panel liefert ein Datum, das MC-Panel `None`. Die Tests sind zu
+beidem agnostisch, weil sie den Stichtag explizit übergeben. Solange die Seite beide Endpunkte mit
+demselben expliziten `as_of` aufruft, ist die Asymmetrie folgenlos; sobald sie es einmal nicht tut,
+kann sie zwei Stichtage nebeneinander anzeigen, ohne dass es auffällt. Der Fix wäre ein Key in
+`monte_carlo`, `valuation.py`.
+
+**Damit ist die Datenseite von Phase 4 fertig.** Zwei Funktionen, zwei Endpunkte, 120 Tests über
+beide. Als Nächstes das Template — Formatierung, Prozentzeichen, Tausendertrenner und
+Vorzeichenfarbe entstehen dort, die Serialisierung liefert bewusst nur Zahlen und Quellen.
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
