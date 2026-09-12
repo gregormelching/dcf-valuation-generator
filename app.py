@@ -50,9 +50,9 @@ VERDICT_BADGE = {
     "no_bracket": "is-warning",
 }
 DESC_ROIC = {
-    "Consistent": "consistent",
+    "Consistent": "Consistent",
     "Implicit_ROIC < WACC": "Implicit ROIC is smaller than WACC",
-    "Unavailable": "unavailable"
+    "Unavailable": "Unavailable"
 }
 ROIC_BADGE = {
     "Consistent": "is-positive",

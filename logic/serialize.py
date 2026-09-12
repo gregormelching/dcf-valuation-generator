@@ -67,7 +67,8 @@ def serialize_company(symbol: str, start_year: int, years: int, freq: str, n: in
         "MCap_Price_Date": wacc["MCap_Price_Date"],
         "MCap_Price_Age_Days": wacc["MCap_Price_Age_Days"],
         "Stub_Years": wacc["Stub_Years"],
-        "Source": wacc["Source"]
+        "Source": wacc["Source"],
+        "COD_Used": wacc["Cost_of_Debt"]
     }
     
     blocks["Quality"] = {

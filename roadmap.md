@@ -5031,6 +5031,68 @@ später getunt, lügt eine hartkodierte Notiz, und niemand merkt es.
 `white-space: nowrap`, und die `kv-table` liegt nicht in `.horizontal-scroll`. Auf schmalen
 Viewports sprengt die tesla-Zeile die Spalte.
 
+#### Phase 4, Schritt 13 — COD_Evidence
+
+Der letzte serialisierte Wert ohne Darstellung. Die Begründung aus Schritt 5 — ein Dict stünde
+roh in einer Zelle — war nach Schritt 12 hinfällig, weil das Provenance-Panel seither eine
+zweite tbody-Gruppe aufnehmen kann, ohne dass eine CSS-Zeile dazukommt.
+
+Der eigentliche Grund, es nicht einfach als fünf weitere Zeilen anzuhängen, ist `COD_Alternative`.
+Das Feld bedeutet auf den beiden Pfaden in `wacc_calculation.py` Verschiedenes: auf dem
+Synthetic-Pfad (Zeile 186) hält es die realisierte Rate, auf dem Floor-Pfad (Zeile 200) die
+synthetische. Es ist immer die verworfene Zahl, aber welche das ist, hängt vom Pfad ab. Unter
+einer festen Überschrift stünden apples 2,71 % und boeings 7,86 % nebeneinander und meinten das
+Gegenteil voneinander.
+
+Gelöst über drei Zeilen mit festen Namen statt über die Rohfelder. Das Template splittet
+`COD_Basis` am `+` und vergleicht den ersten Token gegen `"Synthetic"`; die Zeile "Synthetic rate"
+zieht ihren Wert daraus entweder aus `COD_Used` oder aus `COD_Alternative`. `COD_Alternative`
+erscheint danach unter keinem eigenen Namen mehr. Der Nebeneffekt ist, dass die dokumentierte
+Dublette verschwindet: auf dem Synthetic-Pfad ist `COD_Evidence.Realised` bitgleich mit
+`COD_Alternative`, bei vier von fünf Firmen. Zwei Rohfelder untereinander hätten dieselbe Zahl
+zweimal unter verschiedenen Namen gezeigt, und der Leser hätte auf zwei Messungen geschlossen.
+
+Gemessen, `as_of = 2026-08-19`, `N_MONTHS = 61`:
+
+| Firma | Basis | Verwendet | Synthetisch | Realisiert | Rating | Coverage (Jahr, n) |
+|---|---|---|---|---|---|---|
+| apple | Synthetic | 5.05 % | 5.05 % | 2.71 % | Aaa/AAA | 29.06x (2023, n=8) |
+| boeing | IG_Floor+Below_Investment_Grade | 5.76 % | 7.86 % | 4.73 % | B2/B | 1.54x (2025, n=10) |
+| microsoft | Synthetic | 5.05 % | 5.05 % | 5.48 % | Aaa/AAA | 50.88x (2026, n=11) |
+| procter_gamble | Synthetic | 5.05 % | 5.05 % | 2.63 % | Aaa/AAA | 22.52x (2026, n=11) |
+| tesla | Synthetic | 5.05 % | 5.05 % | 4.66 % | Aaa/AAA | 12.88x (2025, n=10) |
+
+Die 5,05 % bei vier Firmen sind kein Kopierfehler. Die synthetische Rate ist
+`Risk_Free_Rate + Spread`, und alle vier landen bei `Aaa/AAA`, weil ihre Zinsdeckung weit über
+jeder Schwelle der Spread-Tabelle liegt. Die verwendeten Fremdkapitalkosten tragen damit bei vier
+von fünf Firmen keine firmenspezifische Information, und bei der fünften sind sie eine Annahme,
+nämlich der IG-Floor. Das war vorher nicht sichtbar, weil die verwendete Rate überhaupt nicht im
+Panel stand. Microsoft ist außerdem die einzige Firma, deren realisierte Rate über der verwendeten
+liegt — die verworfene Alternative ist nicht systematisch die niedrigere.
+
+**`Cost_of_Debt` kam gar nicht bis zur Serialisierung.** `serialize.py` liest `dcf["wacc"]`, und
+dieses Dict wird in `valuation.py:179` neu aufgebaut. `COD_Basis`, `COD_Alternative` und
+`COD_Evidence` werden dort aus `wacc_calc` durchgereicht, `Cost_of_Debt` nicht — die verwendete
+Zahl war im gesamten Modul nicht vorhanden. Die Lücke fiel drei Phasen lang nicht auf, weil
+niemand danach gefragt hat: die WACC selbst wird durchgereicht, ihre Komponenten nicht. Nachgezogen
+als ein Feld im Dict-Literal. Kein Test pinnt das Key-Set von `dcf_value`.
+
+Der Wert variiert nicht mit dem `wacc_offset`. Der Offset wird in `valuation.py:131-133` auf die
+fertige WACC addiert, nicht auf ihre Bestandteile. Eine Gitterzelle mit Offset trägt denselben
+Fremdkapitalsatz wie die Basis.
+
+Zwei Dinge, die aus den Daten der fünf Firmen nicht hervorgehen. `Year` in `COD_Evidence` ist das
+letzte Jahr mit sauberen Flags auf `OperatingIncome` und `InterestExpense`, nicht das letzte
+Geschäftsjahr — bei apple steht dort 2023, während `Data_Filed` 2025 zeigt. Und `Rating` und
+`Coverage` beschreiben auf dem Floor-Pfad die verworfene Alternative: boeings `B2/B` bei 1,54x ist
+der Grund, warum der synthetische Pfad abgelehnt wurde, nicht die Bonität hinter den 5,76 %.
+Deshalb stehen beide Zeilen unter der synthetischen Rate, nicht unter der verwendeten.
+
+`Rating` ist das einzige Feld der Gruppe ohne Filter und bekam deshalb einen `or "N/A"`-Guard.
+Im Zweig `synth["Source"] == "Unavailable"` sind `Rating`, `Coverage` und `Year` gleich `None`;
+`pct` und `multiple` fangen das ab, ein blankes `{{ }}` hätte das Wort `None` in die Zelle
+geschrieben. Der Zweig tritt bei keiner der fünf Firmen auf.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
