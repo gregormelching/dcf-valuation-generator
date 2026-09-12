@@ -212,6 +212,78 @@
   {% else %}
    <div class="card">Implied value is not available.</div>
   {% endif %}
+  {% if panel.Ceiling %}
+  <section class="panel">
+    <h2 class="panel-title">Ceiling Value</h2>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Ceiling value per share</th><th>Ceiling gap</th><th>Reachable</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">{{ panel.Ceiling.Ceiling_Value_Per_Share | money }}</td>
+          <td class="num">{{ panel.Ceiling.Ceiling_Gap | signed }}</td>
+          <td>
+            {% if panel.Ceiling.Reachable %}
+            <span class="badge is-positive">reachable</span>
+            {% else %}
+            <span class="badge is-negative">out of reach</span>
+            {% endif %}
+          </td>
+          <td>{{ panel.Ceiling.Status }}</td></tr>
+      </tbody>
+    </table>
+    <p class="table-note">
+      Contributions are leave-one-out differences and do not add up to the ceiling.
+    </p>
+  </section>
+  {% else %}
+    <div class="card">Ceiling value is not available.</div>
+  {% endif %}
+  {% if panel.Horizon %}
+  <section class="panel">
+    <h2 class="panel-title">Horizon Value</h2>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Direction</th><th>Required years</th><th>Ratio</th><th>Verdict</th><th>Best year</th><th>Best value</th><th>Bounds</th><th>Comparator</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{ panel.Horizon.Direction }}</td>
+          <td class="num">{% if panel.Horizon.Required_Years is not none %}{{ panel.Horizon.Required_Years }}{% else %}N/A{% endif %}</td>
+          <td class="num">{{ panel.Horizon.Ratio | multiple }}</td>
+          <td><span class="badge {{ VERDICT_BADGE.get(panel.Horizon.Verdict, "is-warning") }}">{{ panel.Horizon.Verdict }}</span></td>
+          <td class="num">{{ panel.Horizon.Best_Year }}</td>
+          <td class="num">{{ panel.Horizon.Best_Value | money }}</td>
+          <td class="num">{{ panel.Horizon.Bounds[0] }}&ndash;{{ panel.Horizon.Bounds[1] }}</td>
+          <td class="num">{{ panel.Horizon.Comparator }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="horizontal-scroll">
+      <table class="kv-table is-wide">
+        <thead>
+          <tr>
+            <th>Years</th>
+            {% for year, value in panel.Horizon.Curve.items() %}
+            <th class="num{% if year == panel.Horizon.Base_Years %} is-horizon{% endif %}{% if year == panel.Horizon.Required_Years %} is-required{% endif %}">{{ year }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Value per share</td>
+            {% for year, value in panel.Horizon.Curve.items() %}
+            <td class="num{% if year == panel.Horizon.Base_Years %} is-horizon{% endif %}{% if year == panel.Horizon.Required_Years %} is-required{% endif %}">{{ value | money }}</td>
+            {% endfor %}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% else %}
+    <div class="card">Horizon value is not available.</div>
+  {% endif %}
   <section class="panel">
     <h2 class="panel-title">Provenance</h2>
     <table class="kv-table">

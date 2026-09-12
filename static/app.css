@@ -565,3 +565,19 @@ a { color: inherit; text-decoration: none; }
 .kv-table tbody tr.is-base > *:first-child {
   box-shadow: inset 2px 0 0 var(--color-primary-border);
 }
+
+/* Horizon curve */
+.kv-table.is-wide .is-horizon {
+  background: var(--color-primary-subtle);
+  box-shadow: inset 1px 0 0 var(--color-primary-border);
+}
+
+.kv-table.is-wide thead th.is-horizon { color: var(--color-primary); }
+
+.kv-table.is-wide .is-required {
+  background: var(--color-positive-subtle);
+  box-shadow: inset 0 -2px 0 var(--color-positive-text);
+  font-weight: var(--weight-semibold);
+}
+
+.kv-table.is-wide thead th.is-required { color: var(--color-positive-text); }

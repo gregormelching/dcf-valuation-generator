@@ -4888,6 +4888,83 @@ Filter `multiple` fängt `None` ab. Letzteres ist kein toter Guard — `Implied_
 `Implied_Multiple_Source == "EBITDA <= 0"` legitim `None`, auch wenn die Zeile `calculated` ist. Bei
 keiner der fünf Firmen kommt das heute vor.
 
+#### Phase 4, Schritt 11 — Implied, Ceiling, Horizon
+
+Drei Panels in `templates/company.html`, zwei Dicts in `app.py`, siebzehn Zeilen in `static/app.css`.
+Elf der elf Blöcke sind damit gerendert bis auf `Quality`, das in keiner der bisherigen Listen stand.
+Die drei beantworten dieselbe Frage aus drei Richtungen: was müsste gelten, damit der Kurs
+gerechtfertigt ist — je Hebel einzeln, alle Hebel gemeinsam, über die Zeit.
+
+**Eine Hebeltabelle statt zwei.** Gemessen über alle 25 Hebel-Firma-Paare sind `Required`,
+`Comparator`, `Comparator_Source`, `Status` und `Ratio` in `Ceiling.Levers` identisch mit
+`Implied.Levers`, `Closable` ebenso — `plausible_ceiling` kopiert sie aus `implied_assumptions`,
+das es intern aufruft. Neu ist einzig `Contribution`. Die Spalte wird deshalb über denselben
+Hebelschlüssel aus `panel.Ceiling.Levers[key]` in die Implied-Tabelle geholt, mit eigenem Guard auf
+`panel.Ceiling`: ein gültiges `Ceiling` ohne `Implied` kann es nicht geben, der umgekehrte Fall
+schon. Zwei Tabellen nebeneinander mit fünf gleichen Spalten liest man als zwei verschiedene
+Hebelsätze.
+
+**`Contribution` ist keine Zerlegung, und die Notizzeile sagt das.** `plausible_ceiling` rechnet je
+Hebel den Ceiling-Wert ohne diesen einen Hebel und nimmt die Differenz. Bei Wechselwirkungen zählt
+das doppelt: die Summe der fünf Beiträge überschießt den tatsächlichen Hub um 32 bis 114 Prozent —
+apple 193,71 gegen 141,39, boeing 424,52 gegen 269,73, tesla 430,01 gegen 201,30. Ohne den Satz
+addiert der Leser die Spalte und kommt auf eine Obergrenze, die es nicht gibt.
+
+**Ein Beitrag nahe null ist richtig.** Bei apple, microsoft und procter_gamble ist der Override für
+`ebit_margin` das historische Drei-Jahres-Maximum der operativen Marge, und das ist dort bereits die
+laufende Zielmarge — der Hebel bewegt nichts (0,01 / 0,03 / -0,04 Dollar je Aktie). Der negative
+Wert bei procter_gamble ist Solver-Rauschen, kein Vorzeichenfehler.
+
+**`Reachable` und `Closable` sind zwei Aussagen, nicht eine.** `Reachable` heißt, alle fünf Hebel
+gleichzeitig auf ihrem historischen Extrem erreichen den Kurs; `Closable` listet die Hebel, die es
+allein und im plausiblen Bereich schaffen. Boeing und microsoft sind `reachable` mit leerer
+`Closable`-Liste. Die zwei Notizzeilen stehen deshalb in verschiedenen Panels und sagen
+verschiedene Dinge; eine leere `Closable`-Liste wird ausgeschrieben, weil leer hier "keiner"
+bedeutet und nicht "nicht geprüft".
+
+Gemessen, `as_of = "2026-08-19"`:
+
+| Firma | `Gap` | gelöst / unreachable | `Closable` | `Ceiling_Value_Per_Share` | `Ceiling_Gap` | `Reachable` |
+|---|---|---|---|---|---|---|
+| apple | -58,10 % | 3 / 2 | - | $269.56 | -11,89 % | false |
+| boeing | -78,23 % | 3 / 2 | - | $320.15 | +38,19 % | true |
+| microsoft | -33,59 % | 3 / 2 | - | $568.06 | +14,88 % | true |
+| procter_gamble | -8,81 % | 4 / 1 | revenue_growth, terminal_growth, wacc_offset | $380.17 | +163,00 % | true |
+| tesla | -95,41 % | 1 / 4 | - | $217.01 | -36,60 % | false |
+
+**Die Horizontkurve ist eine einzeilige breite Tabelle, dreißig Jahre als Spalten.** Sie
+wiederverwendet `horizontal-scroll` und `kv-table is-wide` samt klebender erster Spalte aus
+Schritt 8, ohne eine Zeile neues Layout. Kopf und Werte laufen über dasselbe `Curve.items()`; ein
+aus `Bounds` gebauter Kopf würde bei einem Kurvenloch lautlos verrutschen. `.items()` ist hier
+zulässig, anders als bei `Provenance`, weil das Dict von einem `range()` gefüllt wird.
+
+| Firma | `Direction` | Jahr 1 / 10 / 30 | `Best_Year` | `Required_Years` | `Verdict` |
+|---|---|---|---|---|---|
+| apple | up | $104.01 / $128.17 / $168.07 | 30 | - | unreachable |
+| boeing | up | $28.28 / $50.43 / $107.14 | 30 | - | unreachable |
+| microsoft | up | $227.98 / $328.36 / $603.24 | 30 | 23 | Implausible, 1,53x |
+| procter_gamble | up | $128.23 / $131.82 / $137.35 | 30 | - | unreachable |
+| tesla | down | $18.67 / $15.71 / $11.73 | 1 | - | unreachable |
+
+`Curve[Base_Years]` ist bei allen fünf exakt `Headline.Value_Per_Share` — derselbe Prüfstein wie die
+Mittelzelle im Gitter und die Basiszeile in der Margin-Tabelle. Der `is-required`-Marker erscheint im
+ganzen Projekt genau einmal, bei microsoft auf Jahr 23; dass er auf vier von fünf Seiten fehlt, ist
+das Ergebnis und kein kaputtes Template. Basisjahr und Required-Jahr sind zwei unabhängige
+`{% if %}`: als `{% elif %}` verschwände der zweite Marker bei einer Firma, die den Kurs schon im
+Basishorizont erreicht.
+
+**Teslas Kurve fällt**, von $18.67 im Jahr 1 auf $11.73 im Jahr 30, `Direction` steht auf `down` und
+`Best_Year` ist 1. Das ist dieselbe Mechanik wie in der untersten Gitterzeile: bei einer
+Reinvestitionsquote über 100 % kostet ein weiteres Jahr Wachstum mehr Kapital, als es an NOPAT
+einbringt. Jede Verkürzung, die nur den letzten Kurvenwert zeigt oder das Maximum am rechten Rand
+vermutet, hat hier ihren Gegenbeweis.
+
+Neu in `app.py`: `DESC_IMP_LEVERS` für die fünf Hebelbeschriftungen und `VERDICT_BADGE` für die
+Farbe. Das Verdict-Dict kennt nur `Plausible` und `Implausible` als Urteile; `unreachable` und
+`no_bracket` kommen aus `Status` durch und werden im Template über `.get(..., "is-warning")`
+aufgefangen. Ohne den Fallback stünde bei tesla vier Mal ein farbloses Badge — genau dort, wo die
+Warnung hingehört.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off
