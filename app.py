@@ -8,6 +8,7 @@ sys.path.insert(0, str(path))
 from valuation import MC_DRAWS, ASSUMPTIONS
 from wacc_calculation import N_MONTHS
 from serialize import serialize_company, serialize_monte_carlo
+from model import MIN_YEARS, MIN_IC_REVENUE_SHARE
 
 START_YEAR = 2016
 YEARS = 10
@@ -48,6 +49,16 @@ VERDICT_BADGE = {
     "unreachable": "is-warning",
     "no_bracket": "is-warning",
 }
+DESC_ROIC = {
+    "Consistent": "consistent",
+    "Implicit_ROIC < WACC": "Implicit ROIC is smaller than WACC",
+    "Unavailable": "unavailable"
+}
+ROIC_BADGE = {
+    "Consistent": "is-positive",
+    "Implicit_ROIC < WACC": "is-negative",
+    "Unavailable": "is-warning"
+}
 
 app = Flask(__name__)
 
@@ -60,7 +71,7 @@ def company(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
     panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
-    return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT, DESC_MARGIN_BASES = DESC_MARGIN_BASES, DESC_IMP_LEVERS = DESC_IMP_LEVERS, VERDICT_BADGE = VERDICT_BADGE)
+    return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT, DESC_MARGIN_BASES = DESC_MARGIN_BASES, DESC_IMP_LEVERS = DESC_IMP_LEVERS, VERDICT_BADGE = VERDICT_BADGE, DESC_ROIC = DESC_ROIC, ROIC_BADGE = ROIC_BADGE, MIN_YEARS = MIN_YEARS, MIN_IC_REVENUE_SHARE = MIN_IC_REVENUE_SHARE)
 
 def histogram(draws, offset, bins):
     if not draws: return None

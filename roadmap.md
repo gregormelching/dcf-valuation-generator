@@ -4965,6 +4965,72 @@ Farbe. Das Verdict-Dict kennt nur `Plausible` und `Implausible` als Urteile; `un
 aufgefangen. Ohne den Fallback stünde bei tesla vier Mal ein farbloses Badge — genau dort, wo die
 Warnung hingehört.
 
+#### Phase 4, Schritt 12 — Quality
+
+Der letzte Block aus dem Key-Set von `serialize_company`. Er sitzt zwischen Horizon und
+Provenance, also am Ende der Analyse und vor den Metadaten. Anders als alle Blöcke davor
+variiert er keine Annahme, sondern stellt die Terminalgrößen des Modells gegen den aus den
+Filings gemessenen ROIC. Wie `Projection` und `Provenance` wird er in `serialize.py` außerhalb
+der try-Schleife gebaut und kann deshalb nie in `Blocks_Failed` landen — das Panel braucht
+keinen Wächter.
+
+Gemessen, `as_of = 2026-08-19`, `N_MONTHS = 61`:
+
+| Firma | Consistency | Implicit ROIC | WACC | Cap. turnover | IC_Last (Jahr) | EV/EBITDA | ROIC median | ROIC last | n | excl |
+|---|---|---|---|---|---|---|---|---|---|---|
+| apple | Consistent | 121.49 % | 9.03 % | 5.21x | $39.97 B (2025) | 9.42x | N/A | N/A | 0 | 3 |
+| boeing | Consistent | 11.92 % | 8.04 % | 3.32x | $37.32 B (2025) | 7.52x | N/A | N/A | 2 | 2 |
+| microsoft | Consistent | 26.87 % | 9.16 % | 0.78x | $369.49 B (2026) | 8.87x | 95.80 % | 46.53 % | 10 | 0 |
+| procter_gamble | Consistent | 20.80 % | 6.86 % | 1.21x | $78.51 B (2026) | 13.40x | 20.36 % | 20.39 % | 8 | 0 |
+| tesla | Implicit_ROIC < WACC | 6.43 % | 11.26 % | 1.87x | $46.90 B (2025) | 3.30x | 12.20 % | 7.71 % | 7 | 0 |
+
+Bei apple existiert kein historischer ROIC, und das ist kein Datenloch. Invested Capital ist
+`Debt + Equity - Cash` und liegt bei apple in sechs von zehn Jahren unter null, weil die
+Nettoliquidität das Buchkapital übersteigt; in den übrigen Jahren bleibt es unter 5 % des
+Umsatzes. `MIN_IC_REVENUE_SHARE = 0.05` in `model.py` wirft genau diese Jahre raus, damit ein
+Mini-Nenner keinen ROIC von mehreren hundert Prozent erzeugt. Übrig bleiben null verwertbare
+Jahrespaare bei drei ausgeschlossenen. Boeing scheitert anders: dort ist IC ab 2019 groß genug,
+aber nur 2022 und 2023 haben saubere OperatingIncome-Flags, und `MIN_YEARS = 3` ist damit
+unterschritten.
+
+Derselbe `IC_Last` trägt `Implicit_ROIC`. Der Nenner ist `IC_Last` plus die über die zehn
+Projektionsjahre kumulierte Netto-Reinvestition (`model.py`, Zweig `if i == years`); bei apple
+sind das $123,6 Mrd gegen ein terminales NOPAT von $150 Mrd, daher 121,49 %. Das Badge steht
+trotzdem auf grün, weil `ROIC_Consistency` in `valuation.py` ausschließlich `Implicit_ROIC >= WACC`
+prüft. Deshalb zwei Entscheidungen im Panel: `IC_Last` steht in der oberen Gruppe direkt unter
+Implicit ROIC und Capital turnover, nicht bei der Historie, und eine dauerhaft sichtbare Notiz
+nennt den Testumfang. Stünde `IC_Last` unten, läse sich apples 121,49 % als Stärke statt als
+Nenner-Artefakt.
+
+Die WACC-Zeile wiederholt bewusst eine Zahl aus dem Assumptions-Panel. Das Badge ist binär, die
+Information ist der Abstand: tesla liegt 4,83 Prozentpunkte unter WACC, boeing 3,89 darüber.
+Ohne die Zeile stünde im Panel eine Aussage, deren beide Operanden nicht darin vorkommen.
+
+Zwei Beobachtungen aus den Zahlen. Microsofts Median von 95,80 % gegen einen letzten Wert von
+46,53 % zeigt, dass der Median ein roher Median über zehn Jahrespaare ist und keine
+plausibilisierte Größe — in den frühen Jahren war das Invested Capital klein. Und
+procter_gamble ist die einzige Firma, deren Terminalannahme von der Historie gedeckt ist:
+20,80 % implizit gegen 20,36 % Median. Bei den übrigen mit Historie behauptet das Modell
+deutlich weniger, als gemessen wurde.
+
+Die Tabelle ist in zwei `<tbody>` geteilt, oben die Terminalgrößen aus dem Projektionsendjahr,
+unten die aus den Filings gemessenen. Die Trennlinie musste explizit gesetzt werden, und zwar
+in die Gegenrichtung der Intuition: `.kv-table tr:last-child td { border-bottom: 0 }` greift pro
+tbody, das Aufteilen entfernt also die Linie zwischen den Gruppen, statt eine hinzuzufügen.
+Gesetzt wird sie über `.kv-table tbody + tbody > tr:first-child > *` mit `box-shadow: inset 0 1px 0`,
+nicht über `border-top` — unter `border-collapse: collapse` rendern Ränder auf Zeilen- und
+Gruppenelementen browserabhängig. `> *` statt `td`, damit ein später eingefügtes `<th>` nicht
+durchfällt. Dazu `.table-note + .table-note`, das der zweiten Notiz Rahmen und oberes Padding
+nimmt, weil sonst zwei Trennlinien mit einem leeren Streifen dazwischen stünden.
+
+`MIN_YEARS` und `MIN_IC_REVENUE_SHARE` werden aus `model` importiert und an `render_template`
+durchgereicht, statt die 3 und die 5 % in den Notiztext zu schreiben. Wird der Schwellwert
+später getunt, lügt eine hartkodierte Notiz, und niemand merkt es.
+
+**Offen:** Das Label für `Implicit_ROIC < WACC` ist mit 36 Zeichen lang für ein Badge mit
+`white-space: nowrap`, und die `kv-table` liegt nicht in `.horizontal-scroll`. Auf schmalen
+Viewports sprengt die tesla-Zeile die Spalte.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

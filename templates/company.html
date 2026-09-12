@@ -285,6 +285,33 @@
     <div class="card">Horizon value is not available.</div>
   {% endif %}
   <section class="panel">
+    <h2 class="panel-title">Quality</h2>
+    <table class="kv-table">
+      <tbody>
+        <tr>
+          <td>ROIC consistency</td>
+          <td class="num"><span class="badge {{ ROIC_BADGE.get(panel.Quality.ROIC_Consistency, "is-warning") }}">{{ DESC_ROIC.get(panel.Quality.ROIC_Consistency, panel.Quality.ROIC_Consistency) }}</span></td>
+          <td class="src"></td>
+        </tr>
+        <tr><td>Implicit ROIC</td><td class="num">{{ panel.Quality.Implicit_ROIC | pct }}</td><td class="src">Terminal year</td></tr>
+        <tr><td>WACC</td><td class="num">{{ panel.Headline.WACC | pct }}</td><td class="src"></td></tr>
+        <tr><td>Capital turnover</td><td class="num">{{ panel.Quality.Capital_Turnover | multiple }}</td><td class="src">Terminal year</td></tr>
+        <tr><td>Invested capital</td><td class="num">{{ panel.Quality.IC_Last | money }}</td><td class="src">{{ panel.Quality.IC_Last_Year }}</td></tr>
+        <tr><td>Implied EV/EBITDA</td><td class="num">{{ panel.Quality.Implied_Multiple | multiple }}</td><td class="src">{{ panel.Quality.Implied_Multiple_Source }}</td></tr>
+      </tbody>
+      <tbody>
+        <tr><td>ROIC median</td><td class="num">{{ panel.Quality.ROIC_Median | pct }}</td><td class="src">{{ panel.Quality.ROIC_Source }}</td></tr>
+        <tr><td>ROIC last</td><td class="num">{{ panel.Quality.ROIC_Last | pct }}</td><td class="src"></td></tr>
+        <tr><td>Year pairs used</td><td class="num">{{ panel.Quality.ROIC_n }}</td><td class="src"></td></tr>
+        <tr><td>Years excluded</td><td class="num">{{ panel.Quality.ROIC_Excluded_Small_IC }}</td><td class="src">IC below {{ MIN_IC_REVENUE_SHARE | pct }} of revenue</td></tr>
+      </tbody>
+    </table>
+    <p class="table-note">Consistency compares the implicit terminal ROIC with WACC and tests nothing else.</p>
+    {% if panel.Quality.ROIC_Source != "Median" %}
+    <p class="table-note">No historical ROIC: {{ panel.Quality.ROIC_n }} usable year pairs against a minimum of {{ MIN_YEARS }}, {{ panel.Quality.ROIC_Excluded_Small_IC }} excluded. Implicit ROIC and capital turnover rest on the same invested capital.</p>
+    {% endif %}
+  </section>
+  <section class="panel">
     <h2 class="panel-title">Provenance</h2>
     <table class="kv-table">
       <tbody>

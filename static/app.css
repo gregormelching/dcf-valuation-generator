@@ -581,3 +581,13 @@ a { color: inherit; text-decoration: none; }
 }
 
 .kv-table.is-wide thead th.is-required { color: var(--color-positive-text); }
+
+/* Quality group separator */
+.kv-table tbody + tbody > tr:first-child > * {
+  box-shadow: inset 0 1px 0 var(--color-border-strong);
+}
+
+.table-note + .table-note {
+  padding-top: 0;
+  border-top: 0;
+}
