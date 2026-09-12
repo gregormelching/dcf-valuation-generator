@@ -4738,6 +4738,78 @@ der Projektion tritt das nicht auf, der kleinste Absolutwert über alle fünf Fi
 (Tesla dNWC).
 
 
+#### Phase 4, Schritt 9 — das Sensitivitätsgitter
+
+Ein Block in `templates/company.html`, 48 Zeilen in `static/app.css`, nichts in `app.py`. Sechs der
+elf Blöcke sind gerendert. Anders als bei `Projection` liefert die Serialisierung hier alles, was die
+Darstellung braucht: `Offsets`, `Growths`, `Rows`, und jede Zelle trägt ihre eigenen Koordinaten
+(`Offset`, `Terminal_Growth`, `WACC`, `TV_Share`, `Status`). Kein neuer Filter, keine neue Konstante.
+
+**Die Darstellungsentscheidung: Zweizustandsfärbung gegen den Marktpreis, keine Heatmap.** Eine
+Farbskala über Minimum und Maximum des Gitters normiert innerhalb jeder Firma. Teslas Spanne von
+14,05 bis 18,91 — Verhältnis 1,35 — bekäme damit exakt denselben Verlauf wie Boeings 21,95 bis
+145,62, Verhältnis 6,63. Das ist die Histogramm-Falle ein zweites Mal, und hier schlimmer, weil fünf
+Firmen nebeneinander gelesen werden. Die Schwelle beantwortet stattdessen die Frage, für die ein
+Sensitivitätsgitter überhaupt existiert: welche Annahmenpaare rechtfertigen den aktuellen Kurs.
+
+Die Antwort ist bei drei von fünf Firmen "keines", und das ist die Aussage, nicht ein Mangel an
+Farbe. Gemessen, `as_of = "2026-08-19"`, `WACC_OFFSETS = (-0.02, -0.01, 0.0, 0.01, 0.02)`,
+`TERMINAL_GROWTHS = (0.015, 0.02, 0.025, 0.03, 0.035)`:
+
+| Firma | Gitterspanne | Verhältnis | Marktpreis | Zellen über Markt | TV-Anteil |
+|---|---|---|---|---|---|
+| apple | $97.88 – $207.87 | x2,12 | $305.93 | 0 von 25 | 39,4 – 68,5 % |
+| boeing | $21.95 – $145.62 | x6,63 | $231.67 | 0 von 25 | 55,2 – 83,5 % |
+| microsoft | $237.45 – $565.68 | x2,38 | $494.47 | 2 von 25 | 49,3 – 75,8 % |
+| procter_gamble | $81.86 – $396.69 | x4,85 | $144.55 | 10 von 25 | 49,2 – 86,6 % |
+| tesla | $14.05 – $18.91 | x1,35 | $342.27 | 0 von 25 | 66,1 – 83,6 % |
+
+**Die Mittelzelle ist der Prüfstein, nicht Dekoration.** Offset `0.0` und Growth `0.025` sind exakt
+die Basisannahmen; die Zelle ist bei allen fünf bis auf zehn Nachkommastellen identisch mit
+`Headline.Value_Per_Share` — apple 128,17, boeing 50,43, microsoft 328,36, procter_gamble 131,82,
+tesla 15,71. Stimmt sie nicht, ist die Zeilen- oder Spaltenreihenfolge verrutscht, und die Färbung
+sitzt dann auf den falschen Zellen, ohne dass man es sieht.
+
+`is-above` und `is-center` mussten zwei unabhängige `{% if %}` werden. Als `{% elif %}` geschrieben
+schließen sie sich aus; das ist mit den heutigen Daten folgenlos, weil keine Mittelzelle über ihrem
+Kurs liegt, verschluckt aber genau den Fall, für den das Gitter da ist — eine Firma, die unter ihrem
+eigenen Basiswert handelt. Im CSS ist `is-center` deshalb ein Innenrahmen und keine Füllung, sonst
+überschreibt eine der beiden Klassen die andere bei microsoft und procter_gamble.
+
+**Die Monotonie gilt nicht durchgehend, und das ist kein Fehler.** Bei Tesla fällt die unterste Zeile
+(Offset +0,02, WACC 13,26 %) mit steigendem Terminal Growth: 14,15 auf 14,05. Die vorletzte Zeile ist
+praktisch flach. Ursache ist die Reinvestitionsmechanik — Tesla liegt bei einer Reinvestitionsquote
+über 100 %, mehr Wachstum kostet dort mehr Kapital, als es an NOPAT einbringt. Jede spätere
+Vereinfachung, die annimmt, die Werte stiegen nach rechts (etwa um das Maximum an einer Ecke
+abzugreifen), hat in dieser Zeile ihren Gegenbeweis.
+
+**Der Terminal-Value-Anteil ist gemessen, aber nicht dargestellt.** Er läuft über das Gitter von
+39,4 % bis 86,6 %. Die Ecke oben rechts, die bei Procter & Gamble mit $396.69 den Kurs mühelos
+schlägt, bezieht 86,6 % ihres Werts aus der Terminal Value und sagt damit fast nichts über die zehn
+explizit modellierten Jahre aus. `TV_Share` liegt in jeder Zelle bereit; ein `title`-Attribut wie
+beim Histogramm wäre der Ort dafür. Solange es fehlt, zeigt eine Zelle nur den Preis und verschweigt,
+worauf er beruht.
+
+**`Grid` ist der erste Block mit einem echten Fehlerzweig.** `Projection` entsteht außerhalb der
+try-Schleife in `serialize.py` und ist innerhalb von `{% if ok %}` garantiert eine Liste; `Grid`,
+`Margin_Table`, `NWC_Table`, `Implied`, `Ceiling` und `Horizon` laufen alle durch die Schleife und
+werden bei `ValueError` zu `None`. Der `{% if panel.Grid %}` mit seinem `{% else %}` ist die Vorlage
+für die nächsten fünf.
+
+**Zwei Zweige bleiben ungeprüft.** Keine der 125 Zellen über alle fünf Firmen hat
+`Status != "calculated"`, und `Grid` steht bei keiner in `Blocks_Failed`. Zellfehlerzweig und
+Blockfehlerzweig sind über echte Daten beide unerreichbar, wie der Leer-Zweig des Histogramms. Sie
+wären nur über eine künstlich enge `WACC_OFFSETS`-Reihe oder ein Symbol ohne Kursdaten zu sehen.
+
+Gerendert: 6 Zeilen zu je 6 Zellen, 25 `<td>`, kein "N/A", genau eine `is-center` je Firma, grüne
+Zellen 0/0/2/10/0. Antwortzeit unverändert, das Gitter war schon vorher Teil von `serialize_company`.
+
+**Offen:** die Notizzeile unter der Tabelle für den Fall, dass keine Kombination den Marktpreis
+erreicht. Betrifft apple, boeing und tesla. Ohne sie ist ein farbloses Gitter nicht davon zu
+unterscheiden, dass es die Schwellenfärbung gar nicht gibt — dieselbe Lücke, die beim Histogramm die
+Zeile unter der Achse schließt.
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

@@ -81,7 +81,34 @@
       </table>
     </div>
   </section>
-
+  {% if panel.Grid %}
+  <section class="panel">
+    <h2 class="panel-title">Sensitivity</h2>
+    <div class="horizontal-scroll">
+      <table class="kv-table is-grid">
+        <thead>
+          <tr>
+          <th>WACC\g</th>
+          {% for g in panel.Grid.Growths %}
+          <th>{{g | pct}}</th>
+          {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in panel.Grid.Rows %}
+          <tr><th>{{ r[0].WACC | pct }}<span class="offset">{{ panel.Grid.Offsets[loop.index0] | signed}}</span></th>
+          {% for c in r %}
+          <td class="num {% if c.Value_Per_Share is not none and panel.Headline.Market_Price is not none and c.Value_Per_Share >= panel.Headline.Market_Price %}is-above{% endif %}{% if c.Offset == 0.0 and c.Terminal_Growth == 0.025 %} is-center{% endif %}">{{ c.Value_Per_Share |money}}</td>
+          {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% else %}
+  <div class="card">Sensitivity analysis is not available.</div>
+  {% endif %}
   <section class="panel">
     <h2 class="panel-title">Provenance</h2>
     <table class="kv-table">
