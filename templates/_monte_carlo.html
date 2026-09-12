@@ -1,0 +1,86 @@
+{% set ok = mc.Status == "calculated" %}
+{% if not ok %}
+  <div class="card">{{ mc.Status }}</div>
+{% else %}
+  <div class="stat-row">
+    <div class="stat-card">
+        <div class="stat-label">Base Value per Share</div>
+        <div class="stat-value">{{ mc.Offset.Base_Value_Per_Share | money }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Median</div>
+        <div class="stat-value">{{ mc.Offset.Median | money }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Median Offset</div>
+        <div class="stat-value">{{ mc.Offset.Median_Offset | signed }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Draws above Market</div>
+        <div class="stat-value">{{ mc.Offset.P_Above_Market | pct }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Mode Position</div>
+        <div class="stat-value">{{ mc.Offset.Mode_Position }}</div>
+        {% if mc.Offset.Mode_Position in ("Min", "Max") %}
+            <div class="stat-delta"><span class="badge is-warning">Mode position is minimum or maximum</span></div>
+        {% endif %}
+    </div>
+  </div>
+  {% if mc.Distribution %}
+  <section class="panel">
+    <h2 class="panel-title">Distribution</h2>
+    <table class="kv-table">
+        <tbody>
+            {% for d in mc.Distribution %}
+            <tr>
+                <td class="num">{{ d.Percentile | pct }}</td>
+                <td class="num">{{ d.Value | money }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+  </section>
+  {% else %}
+  <section class="panel">
+    <h2 class="panel-title">Distribution</h2>
+    <table class="kv-table">
+        <tbody>
+            <tr><td>Draws OK</td><td class="num">{{ mc.Reliability.Draws_OK }}</td></tr>
+            <tr><td>Draws requested</td><td class="num">{{ mc.Inputs.Draws_Requested }}</td></tr>
+        </tbody>
+    </table>
+  </section>
+  {% endif %}
+  <section class="panel">
+    <h2 class="panel-title">Inputs</h2>
+    <table class="kv-table">
+        <tbody>
+           <tr><td>WACC</td><td class="num">{{ mc.Inputs.WACC | pct }}</td></tr> 
+           <tr><td>WACC sigma</td><td class="num">{{ mc.Inputs.WACC_Sigma | pct }}</td></tr> 
+           <tr><td>Margin low</td><td class="num">{{ mc.Inputs.Margin_Low | pct }}</td></tr> 
+           <tr><td>Margin mode</td><td class="num">{{ mc.Inputs.Margin_Mode | pct }}</td></tr> 
+           <tr><td>Margin high</td><td class="num">{{ mc.Inputs.Margin_High | pct }}</td></tr> 
+           <tr><td>Terminal growth borders</td><td class="num">{{ mc.Inputs.Terminal_Growth_Borders | map("pct") | join(", ") }}</td></tr> 
+           <tr><td>Margin bases used</td><td class="num">{{ mc.Inputs.Margin_Bases_Used | join(", ") }}</td></tr> 
+           <tr><td>Draws requested</td><td class="num">{{ mc.Inputs.Draws_Requested }}</td></tr> 
+           <tr><td>Seed</td><td class="num">{{ mc.Inputs.Seed }}</td></tr> 
+        </tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <h2 class="panel-title">Reliability</h2>
+    <table class="kv-table">
+        <tbody>
+            <tr><td>Draws OK</td><td class="num">{{ mc.Reliability.Draws_OK }}</td></tr> 
+            <tr>
+                <td>Draws failed</td><td class="num">{% if mc.Reliability.Draws_Failed > 0 %}
+                <span class="badge is-warning">Warning</span>
+                {% endif %}{{ mc.Reliability.Draws_Failed }}</td>
+            </tr> 
+            <tr><td>Failures</td><td class="num">{{ mc.Reliability.Failures | join(", ") }}</td></tr> 
+        </tbody>
+    </table>
+  </section>
+  <script type="application/json" id="mc-draws">{{ mc.Draws | tojson}}</script>
+{% endif %}

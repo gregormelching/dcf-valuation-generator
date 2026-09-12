@@ -7,7 +7,7 @@ sys.path.insert(0, str(path))
 
 from valuation import MC_DRAWS, ASSUMPTIONS
 from wacc_calculation import N_MONTHS
-from serialize import serialize_company
+from serialize import serialize_company, serialize_monte_carlo
 
 START_YEAR = 2016
 YEARS = 10
@@ -28,6 +28,13 @@ def company(symbol):
         abort(404)
     panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
     return render_template("company.html", panel = panel)
+
+@app.route("/company/<symbol>/monte-carlo", methods = ["GET"])
+def monte_carlo(symbol):
+    if symbol not in ASSUMPTIONS:
+        abort(404)
+    panel = serialize_monte_carlo(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF, draws = MC_PANEL_DRAWS)
+    return render_template("_monte_carlo.html", mc = panel)
 
 @app.template_filter("pct")
 def pct(p):

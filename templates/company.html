@@ -82,5 +82,11 @@
       </tbody>
     </table>
   </section>
+  <section id="mc-panel" data-url="{{ url_for('monte_carlo', symbol = panel.Symbol, as_of = request.args.get('as_of')) }}">
+    <div class="loader-placeholder">
+        <div class="spinner"></div>
+        <span>Content is loading...</span>
+    </div>
+  </section>
 {% endif %}
 {% endblock %}

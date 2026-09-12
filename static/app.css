@@ -261,7 +261,8 @@ a { color: inherit; text-decoration: none; }
 .badge.is-warning  { background: var(--color-warning-subtle);  color: var(--color-warning-text); }
 
 /* Error card */
-.card {
+.card,
+.error-card {
   padding: var(--space-6);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -275,14 +276,15 @@ a { color: inherit; text-decoration: none; }
 
 /* Entrance */
 @media (prefers-reduced-motion: no-preference) {
-  .stat-card, .panel, .card {
+  .stat-card, .panel, .card, .error-card {
     animation: rise var(--duration-slow) var(--ease-emphasized) both;
   }
   .stat-card:nth-child(1) { animation-delay: 40ms; }
   .stat-card:nth-child(2) { animation-delay: 80ms; }
   .stat-card:nth-child(3) { animation-delay: 120ms; }
   .stat-card:nth-child(4) { animation-delay: 160ms; }
-  .panel { animation-delay: 200ms; }
+  .stat-card:nth-child(5) { animation-delay: 200ms; }
+  .panel { animation-delay: 240ms; }
 }
 
 @keyframes rise {
@@ -301,4 +303,47 @@ a { color: inherit; text-decoration: none; }
   .shell { flex-direction: column; }
   .brand { padding-bottom: 0; }
   .main { padding: var(--space-5); }
+}
+
+/* Async panel */
+.error-card h3 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.error-card p { margin: 0; }
+
+.loader-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 240px;
+  padding: var(--space-6);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-pill);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spinner { animation: spin 700ms linear infinite; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
