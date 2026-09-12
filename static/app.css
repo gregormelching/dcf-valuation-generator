@@ -450,3 +450,49 @@ a { color: inherit; text-decoration: none; }
   .histogram-bars { gap: 1px; }
   .histogram-marker::after { display: none; }
 }
+
+/* Wide table */
+.horizontal-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.kv-table.is-wide th,
+.kv-table.is-wide td {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.kv-table.is-wide thead th:first-child,
+.kv-table.is-wide tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-surface);
+  box-shadow: 1px 0 0 var(--color-border);
+  white-space: nowrap;
+}
+
+.kv-table.is-wide tbody tr:hover td:first-child { background: var(--color-surface-2); }
+
+.kv-table.is-wide thead th:first-child {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-regular);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-faint);
+}
+
+.kv-table.is-wide .is-terminal {
+  background: var(--color-primary-subtle);
+  box-shadow: inset 1px 0 0 var(--color-primary-border);
+}
+
+.kv-table.is-wide thead th.is-terminal { color: var(--color-primary); }
+
+.kv-table .num.is-negative { color: var(--color-negative); }
+
+@media (max-width: 720px) {
+  .kv-table.is-wide th,
+  .kv-table.is-wide td { padding: var(--space-1) var(--space-2); }
+}

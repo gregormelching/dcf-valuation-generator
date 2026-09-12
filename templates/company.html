@@ -57,6 +57,32 @@
   </section>
 
   <section class="panel">
+    <h2 class="panel-title">Projection</h2>
+    <div class="horizontal-scroll">
+      <table class="kv-table is-wide">
+        <thead>
+          <tr>
+            <th>{{ PROJECTION_UNIT[1] }}</th>
+            {% for p in panel.Projection %}
+            <th class="num{% if p.Is_Terminal %} is-terminal{% endif %}">{{ p.Year }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for label, key, kind in PROJECTION_ROWS %}
+          <tr>
+            <td>{{ label }}</td>
+            {% for p in panel.Projection %}
+            <td class="num{% if p.Is_Terminal %} is-terminal{% endif %}{% if p[key] is not none and p[key] < 0 %} is-negative{% endif %}">{% if kind == "money" %}{{ p[key] | unit }}{% else %}{{ p[key] | pct }}{% endif %}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
     <h2 class="panel-title">Provenance</h2>
     <table class="kv-table">
       <tbody>

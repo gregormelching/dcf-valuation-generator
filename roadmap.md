@@ -4666,6 +4666,78 @@ damit ungeprüft und bleiben es. Die Serialisierungsschicht darunter ist mit 120
 Schaden bleibt also auf die Darstellung begrenzt.
 
 
+#### Phase 4, Schritt 8 — die Projektionstabelle
+
+`PROJECTION_UNIT`, `PROJECTION_ROWS` und der Filter `unit` in `app.py`, die Tabelle in
+`templates/company.html`, 46 Zeilen in `static/app.css`. Fünf der elf Blöcke sind gerendert:
+`Headline`, `Assumptions`, `Provenance`, der Monte-Carlo-Endpunkt und jetzt `Projection`.
+
+**Die in Schritt 5 notierte Grenze der Autoskalierung wird hier fällig, und zwar messbar.** Der
+`money`-Filter wählt die Skala je Wert: Tesla hätte dNWC bei 26 M und Revenue bei 99.843 M in
+derselben Tabelle, also "M" neben "B", und das Auge liest die Ziffern. Procter & Gamble mit dNWC bei
+51 M gegen Revenue bei 89.286 M genauso. Deshalb ein zweiter Filter `unit` mit festem Faktor aus
+`PROJECTION_UNIT = (1e6, "$ in millions")` — Faktor und Beschriftung als **ein** Paar, weil zwei
+getrennte Konstanten still auseinanderlaufen: Kopfzeile sagt millions, Filter teilt durch 1e9, jede
+Zahl ist um Faktor 1000 daneben und nichts wirft einen Fehler.
+
+**Die Tabelle ist transponiert: Positionen als Zeilen, Jahre als Spalten.** Das ist die
+Bankenkonvention und es ist hier auch das, was funktioniert — elf Positionen als Spalten hätten elf
+verschiedene Einheiten nebeneinander, elf Jahre als Spalten teilen sich eine. Die Zeilenordnung und
+die Beschriftungen stehen als `PROJECTION_ROWS` in `app.py`, ein Tupel aus Dreiertupeln
+(Beschriftung, Schlüssel, Art). Der Nebeneffekt ist der eigentliche Gewinn: der Zugriff läuft über
+`p[key]`, und damit ist `D&A` kein Sonderfall mehr — `p.D&A` wäre ein Jinja-Parse-Fehler, weil `&`
+kein Operator in Ausdrücken ist.
+
+**Die Terminalzeile hat drei leere Zellen, bei allen fünf Firmen.** `D&A`, `CapEx` und `dNWC` sind
+dort `None`, weil die Reinvestition im Terminaljahr aus g/ROIC kommt und nicht aus den drei
+Komponenten. Sie bleiben als "N/A" stehen. Auf `0` setzen wäre die direkte Verletzung der Konvention:
+`0` ist anderswo ein gültiger dNWC-Wert, und die drei Zellen würden dann etwas behaupten. Praktische
+Folge für jede spätere Änderung an dieser Tabelle: Arithmetik oder `|round` **vor** dem Filter wirft
+dort `TypeError`, und der Negativtest muss `is not none` links vom `< 0` haben, sonst stirbt die Seite
+bei allen fünf.
+
+**`Is_Terminal` ist als Spaltentönung markiert, nicht als Badge.** Ohne Markierung liest die letzte
+Spalte als elftes explizites Jahr; sie ist es nicht, ihr FCF speist die Terminal Value. Wer die elf
+FCF-Zellen addiert und gegen `PV_Explicit` hält, sucht sonst einen Fehler, den es nicht gibt. Ein
+Badge im Kopf schied aus, weil es eine von zwölf Spalten aufbläht statt sie zu markieren.
+
+**`Projection` hat als einziger der restlichen Blöcke keinen Fehlerzweig.** Es wird in
+`serialize.py` außerhalb der try-Schleife gebaut und steht nie in `Blocks_Failed`; innerhalb von
+`{% if ok %}` ist es garantiert eine Liste. Ein `{% if panel.Projection %}` wäre toter Code. Bei
+`Grid`, `Margin_Table`, `NWC_Table`, `Implied`, `Ceiling` und `Horizon` ist es genau umgekehrt — die
+sechs brauchen den Guard, und das ist der Unterschied, der beim nächsten Block zählt.
+
+**Zwölf Spalten passen nicht auf jeden Bildschirm.** Ein Wrapper mit `overflow-x: auto` und eine
+klebende erste Spalte; die Trennlinie der klebenden Spalte ist ein `box-shadow` und kein `border`,
+weil Ränder klebender Zellen bei `border-collapse: collapse` beim Scrollen verschwinden. Der Wrapper
+muss der Scroll-Container sein, sonst übernimmt `.panel` mit seinem `overflow: hidden` und die Spalte
+scrollt mit. Dazu eine Hover-Regel eigens für die klebende Zelle: sie trägt einen eigenen
+Hintergrund und bliebe bei `tbody tr:hover` sonst als einzige Zelle hell stehen.
+
+Gemessen gegen die Live-DB, `as_of = "2026-08-19"`, alle fünf Seiten Status 200:
+
+| Firma | Jahre | Revenue erste | Revenue Terminal | FCF erste | FCF Terminal | dNWC erste | negative Zellen | Zeit |
+|---|---|---|---|---|---|---|---|---|
+| apple | 2026-2036 | $440,798 | $643,933 | $118,077 | $131,423 | $-2,173 | 12 | 4,7 s |
+| boeing | 2026-2036 | $99,554 | $177,961 | $1,245 | $5,322 | $2,231 | 0 | 4,4 s |
+| microsoft | 2027-2037 | $376,305 | $727,142 | $81,531 | $217,979 | $-3,735 | 10 | 4,0 s |
+| procter_gamble | 2027-2037 | $89,286 | $114,696 | $15,107 | $17,319 | $-51 | 10 | 5,2 s |
+| tesla | 2026-2036 | $99,843 | $142,378 | $-756 | $3,882 | $-26 | 12 | 1,7 s |
+
+Überall 12 `<tr>`, 13 `<th>`, 132 `<td>`, 3-mal "N/A", 12-mal die Terminalklasse. Die Jahre laufen
+nicht bei allen gleich — microsoft und procter_gamble beginnen ein Jahr später, deshalb kommt die
+Kopfzeile aus `p.Year` und nicht aus einer festen Liste in `app.py`. Antwortzeit unverändert
+gegenüber Schritt 5, das Rendern der 132 Zellen kostet im Rauschen.
+
+**Das Vorzeichen steht vor dem Dollarzeichen, in beiden Geldfiltern.** Erst kam `$ -2,173` heraus,
+weil das Minus aus der Zahl selbst stammt und die Formatierung es mitten im Ausdruck stehen lässt.
+Korrigiert über ein abgespaltenes Vorzeichen und `abs()` im Formatstring — `money` hatte denselben
+Fehler und ist mitgezogen, das ändert Headline, Histogrammachse und Monte-Carlo-Panel mit. Die
+Restgrenze: `unit` rundet auf ganze Millionen, ein Betrag zwischen 0 und -500.000 zeigte `-$0`. In
+der Projektion tritt das nicht auf, der kleinste Absolutwert über alle fünf Firmen ist 10 M
+(Tesla dNWC).
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

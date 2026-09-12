@@ -16,6 +16,20 @@ DEFAULT_AS_OF = "2026-08-19"
 MC_PANEL_DRAWS = MC_DRAWS
 MONEY_SCALES = ((1e12, "T"), (1e9, "B"), (1e6, "M"))
 HIST_BINS = 24
+PROJECTION_UNIT = (1e6, "$ in millions")
+PROJECTION_ROWS = (
+    ("Revenue", "Revenue", "money"),
+    ("EBIT", "EBIT", "money"),
+    ("EBIT margin", "EBIT_Margin", "pct"),
+    ("Tax rate", "Tax_Rate", "pct"),
+    ("NOPAT", "NOPAT", "money"),
+    ("D&A", "D&A", "money"),
+    ("CapEx", "CapEx", "money"),
+    ("dNWC", "dNWC", "money"),
+    ("Reinvestment", "Reinvestment", "money"),
+    ("Reinvestment rate", "Reinvestment_Rate", "pct"),
+    ("FCF", "FCF", "money"),
+)
 
 app = Flask(__name__)
 
@@ -28,7 +42,7 @@ def company(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
     panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
-    return render_template("company.html", panel = panel)
+    return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT)
 
 def histogram(draws, offset, bins):
     if not draws: return None
@@ -106,16 +120,24 @@ def pct(p):
 @app.template_filter("money")
 def money(m):
     if m is None: return "N/A"
+    sign = "-" if m < 0 else ""
+    m = abs(m)
     for factor, suffix in MONEY_SCALES:
-        if abs(m) >= factor:
-            return f"${m / factor:,.2f} {suffix}"
-    return f"${m:,.2f}"
+        if m >= factor:
+            return f"{sign}${m / factor:,.2f} {suffix}"
+    return f"{sign}${m:,.2f}"
 
 @app.template_filter("signed")
 def signed(s):
     if s is None: return "N/A"
     elif s > 0: return f"+{s*100:.2f} %"
     else: return f"{s*100:.2f} %"
+
+@app.template_filter("unit")
+def unit(u):
+    if u is None: return "N/A"
+    sign = "-" if u < 0 else ""
+    return f"{sign}${abs(u) / PROJECTION_UNIT[0]:,.0f}"
 
 @app.context_processor
 def inject_symbols():
