@@ -6,20 +6,20 @@ def serialize_company(symbol: str, start_year: int, years: int, freq: str, n: in
     try:
         dcf = dcf_value(symbol, start_year, years, freq, n, as_of = as_of)
     except ValueError as e:
-        return {"Symbol": symbol, "As_Of": as_of, "Status": str(e), "Blocks_Failed": ["Grid", "Margin_Table", "NWC_Table", "Implied", "Ceiling", "Horizon"],
+        return {"Symbol": symbol, "As_Of": as_of, "Status": str(e), "Blocks_Failed": {name: str(e) for name in ["Grid", "Margin_Table", "NWC_Table", "Implied", "Ceiling", "Horizon"]},
                 "Headline": None, "Assumptions": None, "Provenance": None, "Quality": None,
                 "Projection": None, "Grid": None, "Margin_Table": None, "NWC_Table": None,
                 "Implied": None, "Ceiling": None, "Horizon": None}
 
     blocks = {}
-    failed = []
+    failed = {}
     
     for name, fn in [("Grid", sensitivity_grid), ("Margin_Table", sensitivity_table), ("NWC_Table", nwc_scenario), ("Implied", implied_assumptions), ("Ceiling", plausible_ceiling), ("Horizon", implied_horizon)]:
         try:
             blocks[name] = fn(symbol, start_year, years, freq, n, as_of = as_of)
-        except ValueError:
+        except ValueError as e:
             blocks[name] = None
-            failed.append(name)
+            failed[name] = str(e)
             
     data = get_data(symbol, start_year, as_of)
     roi = roic(data)

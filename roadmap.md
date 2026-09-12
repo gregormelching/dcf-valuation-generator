@@ -5093,6 +5093,65 @@ Im Zweig `synth["Source"] == "Unavailable"` sind `Rating`, `Coverage` und `Year`
 `pct` und `multiple` fangen das ab, ein blankes `{{ }}` hätte das Wort `None` in die Zelle
 geschrieben. Der Zweig tritt bei keiner der fünf Firmen auf.
 
+#### Phase 4, Schritt 14 — die verlorene Fehlermeldung
+
+`serialize.py` fing pro Block ein `ValueError` und verwarf die Meldung. Im Template stand dann
+"Sensitivity analysis is not available." — derselbe Satz für jede Ursache. Der einzige Zweig der
+Ausgabe, in dem etwas schiefgegangen ist, war zugleich der einzige ohne Information darüber, was.
+
+`Blocks_Failed` ist jetzt ein Dict von Blockname auf Meldung statt einer Liste von Namen. Die
+Alternative wäre ein zweites Feld neben der Liste gewesen; dagegen sprachen zwei Dinge. Ein neues
+Feld hätte in beide Rückgabezweige, in `TOP_KEYS` und in den Formvergleich der Fehlerzweig-Tests
+gemusst, und zwei parallele Strukturen über dieselbe Sache können auseinanderlaufen. Das Dict
+behält den Feldnamen, iteriert weiter über die Blocknamen und ist leer genauso falsy wie die leere
+Liste — jeder namensbasierte Konsument bleibt gültig. Angepasst wurden drei Vergleiche in
+`tests/test_serialize.py`; in den beiden Fehlerzweig-Tests steht jetzt
+`dict.fromkeys(FAILED_BLOCKS, <Meldung>)`, was zusätzlich pinnt, dass dort jeder Eintrag die
+Top-Level-Meldung trägt.
+
+Die sechs Karten behalten ihren Satz und hängen die Meldung mit Doppelpunkt an, statt sie zu
+ersetzen. Die `{% else %}`-Zweige liegen außerhalb der `<section>`, es gibt dort also keine
+Überschrift; die rohe Meldung allein stünde ohne jeden Hinweis darauf, welcher Block fehlt.
+
+**Über die UI ist der Zweig derzeit nicht erreichbar.** `start_year` ist in `app.py` auf 2016
+festgenagelt, und jedes andere `as_of` stirbt vorher am Top-Level mit `Too few prices for the given
+symbol and frequency as_of ...`, weil der Preis-Cache nur um das gepinnte Datum herum gefüllt ist.
+Der Schritt ist damit defensiv. Er wurde trotzdem gebaut, weil die Alternative — der generische
+Satz — genau dann versagt, wenn sich die Datenlage ändert, und das ist der Moment, in dem niemand
+mehr weiß, warum.
+
+Gemessen über variiertes `start_year`, `as_of = 2026-08-19`, `N_MONTHS = 61`:
+
+| start_year | Firma | Blocks_Failed | Meldung |
+|---|---|---|---|
+| 2016 | alle fünf | leer | — |
+| 2017-2021 | boeing | Implied, Ceiling | `boeing: no contiguous 3-year window for OperatingIncome` |
+| 2021, 2022 | tesla | Implied, Ceiling | `tesla: no contiguous 3-year window for OperatingIncome` |
+| 2023 | apple | Top-Level | `Growth_Rate_Median is not defined` |
+| 2023 | boeing, tesla | Top-Level | `Mean_Last_Three is not defined` |
+| 2024 | apple, boeing | Top-Level | `Insufficient Data` |
+| 2024 | tesla | Top-Level | `Missing data for EBIT, D&A, CapEx, or Working Capital` |
+
+Zwei Befunde daraus. `Implied` und `Ceiling` fallen immer gemeinsam, weil `plausible_ceiling` intern
+`implied_assumptions` aufruft — zwei Karten mit derselben Meldung aus derselben Wurzel, kein
+Hinweis auf zwei Fehler. Und `Grid`, `Margin_Table`, `NWC_Table` und `Horizon` sind in keiner
+erreichbaren Konfiguration je fehlgeschlagen; vier der sechs Karten sind praktisch tot und bleiben
+trotzdem stehen.
+
+Bewusst nicht gebaut: eine Übersetzungsschicht von Meldung auf UI-Text. Die Meldungen nennen
+interne Metrik-Keys, etwa `OperatingIncome` statt "EBIT". Ein Mapping müsste jede der über zwanzig
+`raise`-Stellen in `logic/` verfolgen, und eine nicht getroffene Meldung fiele stumm auf den
+generischen Satz zurück — also auf genau den Zustand, den dieser Schritt beseitigt.
+
+`Status` bleibt die Ja-Nein-Prüfung dafür, ob eine Headline existiert. `Blocks_Failed` ist
+informativer geworden, aber im Top-Level-Zweig sind auch `Headline`, `Assumptions`, `Provenance`,
+`Quality` und `Projection` `None`, ohne dort aufzutauchen. Das steht seit Schritt 3 so und ändert
+sich hier nicht.
+
+**Offen:** `start_year` als Query-Parameter wie `as_of` würde den Zweig anklickbar machen —
+`?start_year=2021` auf boeing zeigt ihn. Zwei Zeilen in `app.py`, bewusst nicht Teil dieses
+Schritts, weil es eine neue Bedienfläche ist und keine Fehlerbehandlung.
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

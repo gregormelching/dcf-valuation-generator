@@ -113,7 +113,7 @@
     {% endif %}
   </section>
   {% else %}
-  <div class="card">Sensitivity analysis is not available.</div>
+  <div class="card">Sensitivity analysis is not available: {{ panel.Blocks_Failed.Grid }}</div>
   {% endif %}
   {% if panel.Margin_Table %}
   <section class="panel">
@@ -141,7 +141,7 @@
     </table>
   </section>
   {% else %}
-    <div class="card">Margin table is not available.</div>
+    <div class="card">Margin table is not available: {{ panel.Blocks_Failed.Margin_Table }}</div>
   {% endif %}
   {% if panel.NWC_Table %}
   <section class="panel">
@@ -164,7 +164,7 @@
     </table>
   </section>
   {% else %}
-    <div class="card">NWC table is not available.</div>
+    <div class="card">NWC table is not available: {{ panel.Blocks_Failed.NWC_Table }}</div>
   {% endif %}
   {% if panel.Implied %}
   <section class="panel">
@@ -210,7 +210,7 @@
     </p>
   </section>
   {% else %}
-   <div class="card">Implied value is not available.</div>
+   <div class="card">Implied value is not available: {{ panel.Blocks_Failed.Implied }}</div>
   {% endif %}
   {% if panel.Ceiling %}
   <section class="panel">
@@ -238,7 +238,7 @@
     </p>
   </section>
   {% else %}
-    <div class="card">Ceiling value is not available.</div>
+    <div class="card">Ceiling value is not available: {{ panel.Blocks_Failed.Ceiling }}</div>
   {% endif %}
   {% if panel.Horizon %}
   <section class="panel">
@@ -282,7 +282,7 @@
     </div>
   </section>
   {% else %}
-    <div class="card">Horizon value is not available.</div>
+    <div class="card">Horizon value is not available: {{ panel.Blocks_Failed.Horizon }}</div>
   {% endif %}
   <section class="panel">
     <h2 class="panel-title">Quality</h2>

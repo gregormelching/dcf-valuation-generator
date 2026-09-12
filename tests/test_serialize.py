@@ -55,7 +55,7 @@ def test_top_level_shape(symbol, panels):
     assert panel["Symbol"] == symbol
     assert panel["As_Of"] == AS_OF
     assert panel["Status"] == "calculated"
-    assert panel["Blocks_Failed"] == []
+    assert panel["Blocks_Failed"] == {}
 
 def test_error_return_matches_success_shape():
     out = serialize_company("apple", START_YEAR, FAIL_YEARS, FREQ, N_MONTHS, as_of = AS_OF)
@@ -64,7 +64,7 @@ def test_error_return_matches_success_shape():
     assert out["Symbol"] == "apple"
     assert out["As_Of"] == AS_OF
     assert out["Status"] == FAIL_YEARS_MESSAGE
-    assert out["Blocks_Failed"] == FAILED_BLOCKS
+    assert out["Blocks_Failed"] == dict.fromkeys(FAILED_BLOCKS, FAIL_YEARS_MESSAGE)
     for key in TOP_KEYS:
         if key in ("Symbol", "As_Of", "Status", "Blocks_Failed"):
             continue
@@ -75,7 +75,7 @@ def test_error_return_insufficient_data():
 
     assert sorted(out) == TOP_KEYS
     assert out["Status"] == "Insufficient Data"
-    assert out["Blocks_Failed"] == FAILED_BLOCKS
+    assert out["Blocks_Failed"] == dict.fromkeys(FAILED_BLOCKS, "Insufficient Data")
 
 @pytest.mark.parametrize("symbol", sorted(ASSUMPTIONS))
 def test_headline_matches_dcf(symbol, panels, bases):
@@ -232,7 +232,7 @@ def test_block_failure_is_isolated(monkeypatch):
     out = serialize_company("apple", START_YEAR, YEARS, FREQ, N_MONTHS, as_of = AS_OF)
 
     assert out["Status"] == "calculated"
-    assert out["Blocks_Failed"] == ["Ceiling"]
+    assert out["Blocks_Failed"] == {"Ceiling": "forced"}
     assert out["Ceiling"] is None
     for name in FAILED_BLOCKS:
         if name == "Ceiling":
