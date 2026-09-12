@@ -88,7 +88,7 @@
       <table class="kv-table is-grid">
         <thead>
           <tr>
-          <th>WACC\g</th>
+          <th>WACC &darr; / g &rarr;</th>
           {% for g in panel.Grid.Growths %}
           <th>{{g | pct}}</th>
           {% endfor %}
@@ -98,16 +98,73 @@
           {% for r in panel.Grid.Rows %}
           <tr><th>{{ r[0].WACC | pct }}<span class="offset">{{ panel.Grid.Offsets[loop.index0] | signed}}</span></th>
           {% for c in r %}
-          <td class="num {% if c.Value_Per_Share is not none and panel.Headline.Market_Price is not none and c.Value_Per_Share >= panel.Headline.Market_Price %}is-above{% endif %}{% if c.Offset == 0.0 and c.Terminal_Growth == 0.025 %} is-center{% endif %}">{{ c.Value_Per_Share |money}}</td>
+          <td class="num {% if c.Value_Per_Share is not none and panel.Headline.Market_Price is not none and c.Value_Per_Share >= panel.Headline.Market_Price %}is-above{% endif %}{% if c.Offset == 0.0 and c.Terminal_Growth == 0.025 %} is-center{% endif %}" title="WACC {{ c.WACC | pct }} &middot; g {{ c.Terminal_Growth | pct }} &middot; TV share {{ c.TV_Share | pct }}">{{ c.Value_Per_Share |money}}</td>
           {% endfor %}
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+    {% if panel.Headline.Market_Price is not none %}
+      {% set above = panel.Grid.Rows | sum(start = []) | rejectattr("Value_Per_Share", "none") | selectattr("Value_Per_Share", "ge", panel.Headline.Market_Price) | list | length %}
+      {% if above == 0 %}
+      <p class="table-note">No combination of WACC and terminal growth reaches the market price of {{ panel.Headline.Market_Price | money }}.</p>
+      {% endif %}
+    {% endif %}
   </section>
   {% else %}
   <div class="card">Sensitivity analysis is not available.</div>
+  {% endif %}
+  {% if panel.Margin_Table %}
+  <section class="panel">
+    <h2 class="panel-title">Margin table</h2>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Scenario</th><th>EBIT margin target</th><th>Value per share</th><th>Upside</th><th>TV share</th><th>Implied multiple</th></tr>
+      </thead>
+      <tbody>
+        {% for row in panel.Margin_Table %}
+        <tr{% if row.Is_Base %} class="is-base"{% endif %}>
+          <td>{{ DESC_MARGIN_BASES[row.Margin_Base] }}</td>
+          {% if row.Status == "calculated" %}
+          <td class="num">{{ row.EBIT_Margin_Target | pct }}</td>
+          <td class="num">{{ row.Value_Per_Share | money }}</td>
+          <td class="num">{{ row.Upside | signed }}</td>
+          <td class="num">{{ row.TV_Share | pct }}</td>
+          <td class="num">{{ row.Implied_Multiple | multiple }}</td>
+          {% else %}
+          <td class="src" colspan="5">{{ row.Status }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% else %}
+    <div class="card">Margin table is not available.</div>
+  {% endif %}
+  {% if panel.NWC_Table %}
+  <section class="panel">
+    <h2 class="panel-title">NWC table</h2>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Offset</th><th>NWC intensity</th><th>Value per share</th><th>Upside</th><th>TV share</th></tr>
+      </thead>
+      <tbody>
+        {% for row in panel.NWC_Table %}
+        <tr{% if row.Is_Base %} class="is-base"{% endif %}>
+          <td class="num">{{ row.NWC_Offset | signed }}</td>
+          <td class="num">{{ row.NWC_Intensity | pct }}</td>
+          <td class="num">{{ row.Value_Per_Share | money }}</td>
+          <td class="num">{{ row.Upside | signed }}</td>
+          <td class="num">{{ row.TV_Share | pct }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% else %}
+    <div class="card">NWC table is not available.</div>
   {% endif %}
   <section class="panel">
     <h2 class="panel-title">Provenance</h2>

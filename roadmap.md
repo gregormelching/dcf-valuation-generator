@@ -4783,12 +4783,13 @@ praktisch flach. Ursache ist die Reinvestitionsmechanik — Tesla liegt bei eine
 Vereinfachung, die annimmt, die Werte stiegen nach rechts (etwa um das Maximum an einer Ecke
 abzugreifen), hat in dieser Zeile ihren Gegenbeweis.
 
-**Der Terminal-Value-Anteil ist gemessen, aber nicht dargestellt.** Er läuft über das Gitter von
-39,4 % bis 86,6 %. Die Ecke oben rechts, die bei Procter & Gamble mit $396.69 den Kurs mühelos
-schlägt, bezieht 86,6 % ihres Werts aus der Terminal Value und sagt damit fast nichts über die zehn
-explizit modellierten Jahre aus. `TV_Share` liegt in jeder Zelle bereit; ein `title`-Attribut wie
-beim Histogramm wäre der Ort dafür. Solange es fehlt, zeigt eine Zelle nur den Preis und verschweigt,
-worauf er beruht.
+**Der Terminal-Value-Anteil steht im `title` jeder Zelle, zusammen mit `WACC` und
+`Terminal_Growth`.** Er läuft über das Gitter von 39,4 % bis 86,6 %. Die Ecke oben rechts, die bei
+Procter & Gamble mit $396.69 den Kurs mühelos schlägt, bezieht 86,6 % ihres Werts aus der Terminal
+Value und sagt damit fast nichts über die zehn explizit modellierten Jahre aus. Ohne diese Angabe
+zeigt eine Zelle nur den Preis und verschweigt, worauf er beruht. Der `title` ist bewusst die
+schwächste Form davon — er ist auf Touch-Geräten unerreichbar und im Ausdruck weg; sichtbar wäre die
+Zahl nur um den Preis einer zweiten Zeile je Zelle, die das Gitter von 25 auf 50 Zahlen bringt.
 
 **`Grid` ist der erste Block mit einem echten Fehlerzweig.** `Projection` entsteht außerhalb der
 try-Schleife in `serialize.py` und ist innerhalb von `{% if ok %}` garantiert eine Liste; `Grid`,
@@ -4804,11 +4805,88 @@ wären nur über eine künstlich enge `WACC_OFFSETS`-Reihe oder ein Symbol ohne 
 Gerendert: 6 Zeilen zu je 6 Zellen, 25 `<td>`, kein "N/A", genau eine `is-center` je Firma, grüne
 Zellen 0/0/2/10/0. Antwortzeit unverändert, das Gitter war schon vorher Teil von `serialize_company`.
 
-**Offen:** die Notizzeile unter der Tabelle für den Fall, dass keine Kombination den Marktpreis
-erreicht. Betrifft apple, boeing und tesla. Ohne sie ist ein farbloses Gitter nicht davon zu
-unterscheiden, dass es die Schwellenfärbung gar nicht gibt — dieselbe Lücke, die beim Histogramm die
-Zeile unter der Achse schließt.
+**Nachgetragen: die Notizzeile unter der Tabelle.** Sie erscheint, wenn keine der 25 Zellen den
+Marktpreis erreicht — apple, boeing, tesla. Ohne sie ist ein farbloses Gitter nicht davon zu
+unterscheiden, dass es die Schwellenfärbung gar nicht gibt; dieselbe Lücke, die beim Histogramm die
+Zeile unter der Achse schließt. Die Zählung läuft im Template über
+`Rows | sum(start = []) | rejectattr("Value_Per_Share", "none") | selectattr("Value_Per_Share", "ge", Market_Price)`.
+Das `rejectattr` ist kein Schmuck: eine Zelle mit `Status != "calculated"` trägt `None`, und
+`selectattr` mit `ge` würde darauf einen TypeError werfen — ein Fehlerzweig, der über echte Daten
+nicht vorkommt und deshalb erst in Produktion aufschlüge. Der ganze Block hängt zusätzlich an
+`Market_Price is not none`, weil die Aussage ohne Kurs keine ist.
 
+Die Kopfzelle heißt jetzt `WACC (runter) / g (rechts)` statt `WACC\g`. Der Backslash las sich wie ein
+Tippfehler und sagte nichts darüber, welche Achse welche ist.
+
+Gemessen nach den Nachträgen, `as_of = "2026-08-19"`: je Firma 25 `<td>` mit 25 `title`-Attributen,
+Notizzeile bei apple, boeing und tesla, keine bei microsoft (2 Zellen über Markt) und
+procter_gamble (10).
+
+
+#### Phase 4, Schritt 10 — Margin- und NWC-Tabelle
+
+Zwei Blöcke in `templates/company.html`, ein Beschriftungs-Dict und ein Filter in `app.py`, zehn
+Zeilen in `static/app.css`. Acht der elf Blöcke sind gerendert; offen bleiben `Implied`, `Ceiling`,
+`Horizon` und `Quality`. Beide Tabellen sind derselbe Datensatz unter zwei Hebeln — eine Liste von
+Szenarien mit identischem Kennzahlensatz, eines davon der Basisfall — und deshalb in einem Schritt
+gebaut.
+
+**Drei Spalten weniger, weil sie über die Zeilen konstant sind.** Jede Zeile aus
+`valuation.sensitivity_table` und `valuation.nwc_scenario` trägt `WACC` und `Market_Price`. Gemessen
+über alle fünf Firmen und beide Tabellen: beide sind in jeder Zeile identisch mit dem Wert aus
+`Headline`. Als Spalte wären das fünf gleiche Zahlen, die vortäuschen, der Hebel bewege sie. Der
+Margin-Basis-Hebel verändert die operative Marge, nicht die Kapitalkosten; der NWC-Hebel ebenso
+wenig.
+
+**`Is_Base` ist der Prüfstein, dieselbe Rolle wie die Mittelzelle im Gitter.** Die markierte Zeile
+trägt exakt `Headline.Value_Per_Share`. Anders als im Gitter ist sie **nicht** die mittlere Zeile:
+bei boeing und tesla steht die Basis auf `Last`, bei den anderen drei auf `Mean_Last_Three` — das
+kommt aus `ASSUMPTIONS[symbol]["margin_base"]`. Wer die Markierung wegließe und die Mitte für die
+Basis hielte, vergliche bei zwei von fünf Firmen gegen ein Szenario, mit dem nie gerechnet wurde.
+
+**Der erste Fehlerzweig, der mit echten Daten auftritt.** `Mean_Last_Three` wirft bei boeing und
+tesla `Missing data for EBIT, D&A, CapEx, or Working Capital`; alle sechs Kennzahlen der Zeile sind
+`None`, `Status` trägt die Meldung, `Blocks_Failed` bleibt leer. Zeilenfehler ist nicht Blockfehler.
+Ohne den Zweig stünden dort fünf `N/A` ohne Ursache; mit ihm eine Zelle über `colspan`, die sagt,
+was fehlt. Das ist der Gegensatz zum Gitter, dessen Zellfehlerzweig über echte Daten unerreichbar
+ist.
+
+Gemessen, `as_of = "2026-08-19"`, `MARGIN_BASES = ("Driver_Ratio", "Mean_Last_Three", "Last")`:
+
+| Firma | Basis | `Driver_Ratio` | `Mean_Last_Three` | `Last` | Spanne |
+|---|---|---|---|---|---|
+| apple | Mean_Last_Three | $121.25 | $128.17 | $130.80 | +7,9 % |
+| boeing | Last | $88.63 | fehlt | $50.43 | x1,76 |
+| microsoft | Mean_Last_Three | $303.94 | $328.36 | $335.09 | +10,2 % |
+| procter_gamble | Mean_Last_Three | $127.20 | $131.82 | $130.18 | +3,6 % |
+| tesla | Last | $18.59 | fehlt | $15.71 | +18,3 % |
+
+`NWC_OFFSETS = (-0.05, -0.025, 0.0, 0.025, 0.05)`, aufgeschlagen auf die Driver-Ratio-Intensität:
+
+| Firma | Intensität Basis | -0,05 | +0,05 | Spanne zur Basis |
+|---|---|---|---|---|
+| apple | -8,82 % | $128.47 | $127.87 | 0,5 % |
+| boeing | 22,11 % | $52.75 | $48.10 | 9,2 % |
+| microsoft | -8,40 % | $329.40 | $327.33 | 0,6 % |
+| procter_gamble | -2,27 % | $132.01 | $131.63 | 0,3 % |
+| tesla | -0,52 % | $15.93 | $15.48 | 2,8 % |
+
+**Die Richtung ist bei allen fünf dieselbe, die Stärke nicht.** Mehr Working Capital je Umsatzdollar
+kostet Wert, monoton, ohne Ausnahme. Nur boeing reagiert nennenswert, mit 22,11 % der einzige echte
+Working-Capital-Verbraucher der fünf; die drei mit negativer Intensität — Kunden und Lieferanten
+finanzieren das Geschäft mit — bewegen sich um ein halbes Prozent. Als Hebel taugt NWC bei vier von
+fünf nicht, und genau das ist die Aussage der Tabelle.
+
+**Keine Zeile in keiner der beiden Tabellen erreicht den Marktpreis.** Das höchste Szenario ist bei
+procter_gamble $132.01 gegen $144.55, bei boeing $88.63 gegen $231.67. Die `Upside`-Spalte ist über
+alle 40 Zeilen negativ. Im Sensitivitätsgitter schafft procter_gamble mit zehn von 25 Zellen den
+Kurs — die Diskontierungsannahmen bewegen den Wert dort also deutlich weiter als beide operativen
+Hebel zusammen.
+
+Neu in `app.py`: `DESC_MARGIN_BASES` bildet die drei Schlüssel auf lesbare Beschriftungen ab, und der
+Filter `multiple` fängt `None` ab. Letzteres ist kein toter Guard — `Implied_Multiple` ist bei
+`Implied_Multiple_Source == "EBITDA <= 0"` legitim `None`, auch wenn die Zeile `calculated` ist. Bei
+keiner der fünf Firmen kommt das heute vor.
 
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
