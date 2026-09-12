@@ -30,6 +30,36 @@
   {% if mc.Distribution %}
   <section class="panel">
     <h2 class="panel-title">Distribution</h2>
+    {% if hist %}
+    <div class="panel-body">
+        <div class="histogram">
+            <div class="histogram-bars">
+                {% for b in hist.Bins %}
+                <div class="histogram-bar{% if b.Count == 0 %} is-empty{% endif %}"
+                    style="height: {{ (b.Share * 100) | round(1) }}%; animation-delay: {{ 300 + loop.index0 * 12 }}ms"
+                    title="{{ b.Lower | money }} to {{ b.Upper | money }} &middot; {{ b.Count }} draws"></div>
+                {% endfor %}
+            </div>
+            {% if hist.Base_Position is not none %}
+            <div class="histogram-marker is-base"
+                style="left: {{ (hist.Base_Position * 100) | round(1) }}%"
+                data-label="Base {{ mc.Offset.Base_Value_Per_Share | money }}"></div>
+            {% endif %}
+            {% if hist.Market_Position is not none %}
+            <div class="histogram-marker is-market"
+                style="left: {{ (hist.Market_Position * 100) | round(1) }}%"
+                data-label="Market {{ mc.Offset.Market_Price | money }}"></div>
+            {% endif %}
+        </div>
+        <div class="histogram-axis">
+            <span>{{ hist.Low | money }}</span>
+            <span>{{ hist.High | money }}</span>
+        </div>
+        {% if hist.Market_Position is none %}
+        <p class="histogram-note">Market price {{ mc.Offset.Market_Price | money }} lies {% if mc.Offset.Market_Price > hist.High %}above{% else %}below{% endif %} the plotted range.</p>
+        {% endif %}
+    </div>
+    {% endif %}
     <table class="kv-table">
         <tbody>
             {% for d in mc.Distribution %}
@@ -82,5 +112,4 @@
         </tbody>
     </table>
   </section>
-  <script type="application/json" id="mc-draws">{{ mc.Draws | tojson}}</script>
 {% endif %}

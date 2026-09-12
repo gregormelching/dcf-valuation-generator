@@ -4523,6 +4523,149 @@ restlichen sieben Blöcke — `Projection`, `Grid`, `Margin_Table`, `NWC_Table`,
 Darstellungsentscheidung brauchen; die anderen fünf sind Tabellen wie `Assumptions`.
 
 
+#### Phase 4, Schritt 6 — der Monte-Carlo-Endpunkt, nachgeladen
+
+Zweite GET-Route `/company/<symbol>/monte-carlo`, das Fragment `templates/_monte_carlo.html`,
+`static/mc.js` und die Lade- und Fehlerstile in `static/app.css`. `templates/company.html` trägt
+dafür ein leeres `<section id="mc-panel" data-url="...">` mit Platzhalter. Damit sind vier der elf
+Blöcke gerendert; die Testsuite ist weiterhin unberührt.
+
+**Der Endpunkt liefert HTML, nicht JSON.** Das ist die Entscheidung, die alle sieben restlichen
+Blöcke erben. Die Formatierung steckt in `pct`, `money` und `signed` in `app.py` — ein JSON-Endpunkt
+zwänge dieselben drei Regeln ein zweites Mal in JavaScript, inklusive Tausendertrenner,
+Skalenwahl und `None` → "N/A". Zwei Implementierungen derselben Darstellung driften auseinander,
+und die zweite hätte keine Tests. Der Preis ist, dass der Browser Markup statt Daten bekommt: für
+das Histogramm reicht das nicht, deshalb reiten die rohen Ziehungen als
+`<script type="application/json" id="mc-draws">` mit.
+
+**Das Fragment hat kein `{% extends %}`.** Es wird per `innerHTML` in eine bestehende Seite
+gehängt; mit `extends` käme ein vollständiges Dokument samt `<!doctype>`, `<head>` und Sidebar
+zurück und würde in die Seite hineinverschachtelt. Der Browser meckert dabei nicht, er baut es
+einfach falsch zusammen.
+
+**`as_of` geht über `url_for` in die `data-url`.** `url_for('monte_carlo', symbol = ...,
+as_of = request.args.get('as_of'))` — ohne das fällt der Nachlade-Request auf `DEFAULT_AS_OF`
+zurück, während die Seite darüber den Stichtag aus der Query zeigt. Zwei Stichtage nebeneinander,
+ohne dass es auffällt; derselbe Fehler, der in Schritt 4 auf der Serialisierungsebene geschlossen
+wurde, nur eine Schicht höher.
+
+**`<script src="mc.js">` relativ ist eine Falle, die schweigt.** Auf `/company/apple` löst der
+Browser das zu `/company/mc.js` auf, bekommt 404 und lädt nichts — der Spinner bleibt für immer
+stehen, die Konsole ist leer, weil ein fehlendes Skript kein JS-Fehler ist. `url_for('static',
+filename='mc.js')` in `base.html`, nicht optional.
+
+**Der Timeout ist ein `AbortController`, kein Serverlimit.** `MC_TIMEOUT_MS = 60000` bei
+gemessenen 13 bis 14 s: großzügig genug, dass ein kalter Lauf nicht darin läuft, knapp genug, dass
+ein hängender Request nicht als Dauerspinner endet. `AbortError` trägt eine unbrauchbare
+`.message` ("signal is aborted without reason") und wird über `error.name` auf einen eigenen Text
+abgebildet; `clearTimeout` steht in `finally`, sonst hält der Timer die Seite unnötig wach.
+
+**Der Fehlertext geht über `textContent`, nicht `innerHTML`.** Er kann eine Servermeldung
+enthalten; über `innerHTML` liefe der Parser darüber. `.error-card` hängt in `app.css` an
+derselben Regel wie `.card` statt eine zweite Kopie zu sein — ein roter Rahmen, eine Wahrheit.
+
+**Der Leer-Zweig ist über echte Daten nicht erreichbar.** `Draws_Failed` ist bei allen fünf Firmen
+null, wie schon bei 200 Ziehungen in Schritt 4. Sichtbar wird der Zweig nur über
+`MC_PANEL_DRAWS = 0` in `app.py` — zwei Sekunden statt vierzehn, und genau dafür ist die Konstante
+von `MC_DRAWS` getrennt. Der Zweig zeigt dann ein normales `.panel` mit `Draws OK` **und**
+`Draws requested`, keine Fehlerkarte: `Status` ist dort `"calculated"`, und "0" allein ist die
+halbe Aussage, "0 von 2000" die ganze.
+
+Gemessen gegen die Live-DB, `as_of = "2026-08-19"`, `draws = 2000`, `seed = 12345`:
+
+| Firma | Median | Median_Offset | P_Above_Market | Mode_Position | Antwortzeit | Fragment |
+|---|---|---|---|---|---|---|
+| apple | $126.79 | -1,08 % | 0,00 % | Interior | 14,2 s | 42,4 KB |
+| boeing | $62.47 | +23,89 % | 0,00 % | Min | 13,6 s | 41,1 KB |
+| microsoft | $322.74 | -1,71 % | 0,00 % | Interior | 13,8 s | 41,6 KB |
+| procter_gamble | $130.26 | -1,18 % | 19,10 % | Max | 13,4 s | 42,5 KB |
+| tesla | $16.65 | +5,99 % | 0,00 % | Min | 13,8 s | 42,3 KB |
+
+`Draws_OK` ist überall 2000, `Draws_Failed` null. Vom Fragment sind rund 39 KB der `mc-draws`-Block,
+das Markup selbst sind knapp 3 KB.
+
+**`P_Above_Market` ist bei vier von fünf Firmen exakt null**, und das ist kein Rechenfehler: die
+Streuung über WACC, Marge und Terminal Growth ist um Größenordnungen kleiner als die Lücke zum
+Marktpreis aus Schritt 5 (-58 % bis -95 %). Keine einzige von 2000 Ziehungen erreicht den Kurs. Nur
+Procter & Gamble mit -8,81 % Abstand liegt nah genug, dass 19,10 % der Ziehungen darüber landen. Die
+Aussage des Panels ist damit nicht "wie wahrscheinlich ist der Kurs", sondern "wie eng ist das
+Modell um seinen eigenen Punktwert" — die 12,7 bis 13,9 s kaufen eine Streuungsbreite, keine
+Marktwahrscheinlichkeit.
+
+**Offen:** `#mc-draws` liegt im DOM, aber nichts liest es — das ist der Histogramm-Schritt. Und die
+Ausgabeschicht hat nach wie vor null Tests; nach diesem Schritt ist sie die einzige Schicht ohne.
+Ein Test auf `/company/<symbol>/monte-carlo` gegen die Fixture-DB müsste mit kleinem `draws` laufen,
+sonst kostet das Modul allein 70 s.
+
+
+#### Phase 4, Schritt 7 — das Histogramm
+
+`HIST_BINS = 24` und die Funktion `histogram` in `app.py`, ein Block in `_monte_carlo.html`,
+103 Zeilen in `static/app.css`. `<script type="application/json" id="mc-draws">` ist gelöscht.
+
+**Gebinnt wird auf dem Server, nicht im Browser.** Schritt 4 hatte das vorentschieden — eine
+Binanzahl ist eine Darstellungsentscheidung und gehört in die Template-Schicht. Binning in `mc.js`
+hieße Skalenwahl, Tausendertrenner und `None` → "N/A" ein zweites Mal in JavaScript, also genau die
+Doppelung, die Schritt 6 vermieden hat. `histogram` sitzt deshalb in `app.py` neben den Filtern, nicht
+in `serialize.py`: die Serialisierung liefert Zahlen und Quellen, sonst nichts.
+
+**Damit ist `mc-draws` weggefallen.** Der Block war für ein JS-seitiges Histogramm gedacht und trug
+39 KB, rund 93 % des Fragments. Verloren geht die Möglichkeit, die Binanzahl im Browser ohne
+13-s-Neulauf zu ändern; nichts auf dem Plan braucht sie. Das Fragment ist von 42 KB auf 8 KB
+gefallen. Kommt in einer Zeile zurück, sobald etwas die rohen Ziehungen tatsächlich liest.
+
+**24 Bins, gemessen statt geschätzt.** Bei 16 ist kein Bin leer und der rechte Schwanz verschwindet
+in der Balkenbreite; bei 32 sind bis zu 2 Bins leer und 7 haben unter vier Ziehungen; bei 40 bis zu
+3 leere. 24 ist der Punkt, an dem höchstens ein Bin leer ist und die Rechtsschiefe trotzdem als Form
+lesbar bleibt. Microsoft hat bei 24 genau einen echt leeren Bin — der Fall ist also real und nicht
+konstruiert.
+
+Vier Entscheidungen, die nicht offensichtlich sind:
+
+- **Der Maximalwert muss auf den letzten Bin geklemmt werden.** `(hi - lo) / width` ergibt für ihn
+  exakt `bins`, also einen Index, den es nicht gibt. Ohne die Klemme summieren sich die Zählungen auf
+  1999 statt 2000, und zwar lautlos.
+- **`Share` rechnet gegen `max_count`, nicht gegen die Gesamtzahl.** Bei 24 Bins hält der höchste
+  Balken rund 12 % der Ziehungen; gegen 2000 gerechnet füllte die Grafik ein Achtel der Fläche und
+  sagte nichts.
+- **Nicht-leere Balken haben einen Mindestboden von 2 px, leere nicht.** Der letzte Bin hält 1 bis 5
+  Ziehungen, also 0,3 bis 2 % der Höhe — unter einem Pixel. Ohne Boden ist "eine Ziehung" von "keine
+  Ziehung" nicht unterscheidbar, mit Boden auf allen Bins ist es umgekehrt falsch. Das ist dieselbe
+  Konvention wie überall im Projekt: Absenz muss sichtbar bleiben, und sie muss von Anwesenheit
+  unterscheidbar bleiben.
+- **Eine Markerposition außerhalb 0..1 ist `None`, nicht geklemmt.** Geklemmt stünde die Marktlinie
+  bei vier von fünf Firmen am rechten Rand und sähe aus wie die höchste Ziehung. Stattdessen fällt
+  der Marker weg und eine Zeile unter der Achse nennt den Preis und die Richtung.
+
+**Diese Zeile ist bei vier von fünf Firmen die einzige Aussage zum Marktpreis**, und sie ist der
+Kern des Panels. Die Streuung über WACC, Marge und Terminal Growth ist um Größenordnungen kleiner als
+die Lücke zum Kurs aus Schritt 5: keine einzige von 2000 Ziehungen erreicht ihn. Nur Procter & Gamble
+mit -8,81 % Abstand liegt nah genug, dass die Linie ins Bild fällt. Was das Histogramm zeigt, ist die
+Enge des Modells um seinen eigenen Punktwert, nicht eine Marktwahrscheinlichkeit — dieselbe
+Einschränkung wie bei `P_Above_Market`, nur jetzt sichtbar statt als Prozentzahl getarnt.
+
+Gemessen gegen die Live-DB, `as_of = "2026-08-19"`, `draws = 2000`, `seed = 12345`, `HIST_BINS = 24`:
+
+| Firma | Spanne | Binbreite | höchster Balken | Punktwert bei | Marktpreis |
+|---|---|---|---|---|---|
+| apple | 103,70 – 159,42 | 2,3218 | 241 @ 122,27–124,59 | 43,9 % | außerhalb, darüber |
+| boeing | 28,51 – 122,68 | 3,9241 | 252 @ 59,90–63,82 | 23,3 % | außerhalb, darüber |
+| microsoft | 245,39 – 434,29 | 7,8706 | 242 @ 308,36–316,23 | 43,9 % | außerhalb, darüber |
+| procter_gamble | 96,13 – 198,56 | 4,2678 | 272 @ 126,00–130,27 | 34,8 % | **47,3 %** |
+| tesla | 13,17 – 25,61 | 0,5184 | 288 @ 16,28–16,80 | 20,4 % | außerhalb, darüber |
+
+Die Summe der Zählungen ist bei allen fünf exakt 2000, der höchste Balken exakt `100.0%`.
+Antwortzeit 13,0 bis 14,0 s, unverändert gegenüber Schritt 6 — das Binnen kostet im Rauschen.
+
+**Tests auf die Ausgabeschicht: bewusst verworfen.** Gregors Entscheidung, mit der Begründung, dass
+ein kaputtes Template im Browser sofort sichtbar ist. Das stimmt für Layout und Formatierung. Es
+stimmt nicht für die Fälle, die über echte Daten nicht auftreten: der Leer-Zweig ist nur über
+`MC_PANEL_DRAWS = 0` erreichbar, der Entartungs-Zweig `hi == lo` in `histogram` über gar nichts, und
+die Klemme im Zählschritt fällt bei 1999 statt 2000 Ziehungen optisch nicht auf. Diese drei sind
+damit ungeprüft und bleiben es. Die Serialisierungsschicht darunter ist mit 120 Tests gepinnt, der
+Schaden bleibt also auf die Darstellung begrenzt.
+
+
 ### Phase 7 — Documentation
 - README with an explicit limitations section: which assumptions are judgment calls,
   where the model can be wrong, what it doesn't cover (no M&A adjustments, no one-off

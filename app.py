@@ -15,6 +15,7 @@ FREQ = "1mo"
 DEFAULT_AS_OF = "2026-08-19"
 MC_PANEL_DRAWS = MC_DRAWS
 MONEY_SCALES = ((1e12, "T"), (1e9, "B"), (1e6, "M"))
+HIST_BINS = 24
 
 app = Flask(__name__)
 
@@ -29,12 +30,73 @@ def company(symbol):
     panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
     return render_template("company.html", panel = panel)
 
+def histogram(draws, offset, bins):
+    if not draws: return None
+    
+    lo = min(draws)
+    hi = max(draws)
+    
+    if hi == lo: return {
+            "Bins": [{
+                "Lower": lo,
+                "Upper": hi,
+                "Count": len(draws),
+                "Share": 1.0
+            }],
+            "Low": lo,
+            "High": hi,
+            "Max_Count": len(draws),
+            "Market_Position": None,
+            "Base_Position": None
+    }
+    
+    width = (hi - lo) / bins
+    counts = [0] * bins
+    
+    for v in draws:
+        idx = int((v - lo) / width)
+        idx = min(idx, bins - 1)
+        counts[idx] += 1
+    
+    max_count = max(counts)
+    bin_list = []
+    
+    for i in range(bins):
+        count = counts[i]
+        bin_list.append({
+            "Lower": lo + i * width,
+            "Upper": lo + (i + 1) * width,
+            "Count": count,
+            "Share": count / max_count
+        })
+    
+    def calc_position(price):
+        if price is None: return None
+        
+        pos = (price - lo) / (hi - lo)
+        if pos < 0 or pos > 1: return None
+        
+        return pos
+    
+    mp = offset["Market_Price"]
+    bv = offset["Base_Value_Per_Share"]
+    
+    return {
+        "Bins": bin_list,
+        "Low": lo,
+        "High": hi,
+        "Max_Count": max_count,
+        "Market_Position": calc_position(mp),
+        "Base_Position": calc_position(bv),
+    }
+    
 @app.route("/company/<symbol>/monte-carlo", methods = ["GET"])
 def monte_carlo(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
     panel = serialize_monte_carlo(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF, draws = MC_PANEL_DRAWS)
-    return render_template("_monte_carlo.html", mc = panel)
+    hist = histogram(panel["Draws"], panel["Offset"], HIST_BINS)
+    return render_template("_monte_carlo.html", mc = panel, hist = hist)
 
 @app.template_filter("pct")
 def pct(p):
