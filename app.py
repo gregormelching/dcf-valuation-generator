@@ -35,6 +35,19 @@ DESC_MARGIN_BASES = {
     "Mean_Last_Three": "Mean of last three",
     "Last": "Last reported"
 }
+DESC_IMP_LEVERS = {
+    "ebit_margin": "EBIT margin",
+    "wacc_offset": "WACC offset",
+    "terminal_growth": "Terminal growth",
+    "nwc_intensity": "NWC intensity",
+    "revenue_growth": "Revenue growth"
+}
+VERDICT_BADGE = {
+    "Plausible": "is-positive",
+    "Implausible": "is-negative",
+    "unreachable": "is-warning",
+    "no_bracket": "is-warning",
+}
 
 app = Flask(__name__)
 
@@ -47,7 +60,7 @@ def company(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
     panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
-    return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT, DESC_MARGIN_BASES = DESC_MARGIN_BASES)
+    return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT, DESC_MARGIN_BASES = DESC_MARGIN_BASES, DESC_IMP_LEVERS = DESC_IMP_LEVERS, VERDICT_BADGE = VERDICT_BADGE)
 
 def histogram(draws, offset, bins):
     if not draws: return None

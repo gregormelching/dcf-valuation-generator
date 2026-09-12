@@ -166,6 +166,52 @@
   {% else %}
     <div class="card">NWC table is not available.</div>
   {% endif %}
+  {% if panel.Implied %}
+  <section class="panel">
+    <h2 class="panel-title">Implied Value</h2>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Gap</th><th>Target</th><th>Terminal growth ceiling</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">{{ panel.Implied.Gap | signed }}</td>
+          <td class="num">{{ panel.Implied.Target | money }}</td>
+          <td class="num">{{ panel.Implied.Terminal_Growth_Ceiling | pct}}</td>
+        </tr>
+      </tbody>
+    </table>
+    <table class="kv-table">
+      <thead>
+        <tr><th>Lever</th><th>Base</th><th>Required</th><th>Comparator</th><th>Comparator source</th><th>Ratio</th><th>Contribution</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>
+        {% for key, label in DESC_IMP_LEVERS.items() %}
+        {% set lever = panel.Implied.Levers[key] %}
+        <tr>
+          <td>{{ label }}</td>
+          <td class="num">{{ lever.Base | pct }}</td>
+          <td class="num">{{ lever.Required | pct }}</td>
+          <td class="num">{{ lever.Comparator | pct }}</td>
+          <td class="src">{{ lever.Comparator_Source }}</td>
+          <td class="num">{{ lever.Ratio | multiple }}</td>
+          <td class="num">{{ (panel.Ceiling.Levers[key].Contribution | money) if panel.Ceiling else "N/A" }}</td>
+          <td><span class="badge {{ VERDICT_BADGE.get(lever.Verdict, "is-warning") }}">{{ lever.Verdict }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="table-note">
+      {% if panel.Implied.Closable %}
+      Closable by a single lever within its historical range: {{ panel.Implied.Closable | join(", ") }}.
+      {% else %}
+      No single lever closes the gap within its historical range.
+      {% endif %}
+    </p>
+  </section>
+  {% else %}
+   <div class="card">Implied value is not available.</div>
+  {% endif %}
   <section class="panel">
     <h2 class="panel-title">Provenance</h2>
     <table class="kv-table">
