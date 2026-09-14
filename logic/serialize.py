@@ -24,7 +24,12 @@ def serialize_company(symbol: str, start_year: int, years: int, freq: str, n: in
     data = get_data(symbol, start_year, as_of)
     roi = roic(data)
     wacc = dcf["wacc"]
-    
+    first_year = min((year for year, vals in data.items() if any(v["Value"] is not None for v in vals.values())), default = None)
+
+    if first_year is None: start_year_source = "Unavailable"
+    elif first_year == start_year: start_year_source = "Requested"
+    else: start_year_source = "Clipped_To_Data"
+
     blocks["Headline"] = {
         "Value_Per_Share": wacc["Value_Per_Share"],
         "Market_Price": wacc["Market_Price"],
@@ -57,6 +62,9 @@ def serialize_company(symbol: str, start_year: int, years: int, freq: str, n: in
     ]
     
     blocks["Provenance"] = {
+        "Start_Year": start_year,
+        "Data_Start_Year": first_year,
+        "Start_Year_Source": start_year_source,
         "Data_Filed": wacc["Data_Filed"],
         "Price_Date": wacc["Price_Date"],
         "Price_Age_Days": wacc["Price_Age_Days"],
