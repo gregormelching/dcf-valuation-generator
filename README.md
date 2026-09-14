@@ -69,6 +69,21 @@ leaving the historical range, and that is the output the model exists to produce
 
 ## The assumptions that move the number
 
+Measured first, so the order is not a guess. Each column is one input moved away from the base case,
+everything else held:
+
+| Company | WACC -1 pp | EBIT margin +2 pp | Revenue growth +2 pp | Terminal growth +0.5 pp | Terminal ROIC x1.5 |
+|---|---|---|---|---|---|
+| Apple | +15.6 % | +4.7 % | +7.4 % | +4.1 % | +3.5 % |
+| Boeing | +42.5 % | +69.0 % | +11.6 % | +9.5 % | +10.8 % |
+| Microsoft | +18.5 % | +3.7 % | +7.4 % | +4.6 % | +4.0 % |
+| Procter & Gamble | +30.7 % | +7.8 % | +8.8 % | +9.1 % | +4.2 % |
+| Tesla | +7.2 % | +21.2 % | +3.6 % | +0.3 % | +4.1 % |
+
+The discount rate dominates everywhere except Boeing and Tesla, where the EBIT margin does — both
+operate near zero margin, so two points is a large relative move. Terminal ROIC is the weakest of the
+five even at a 50 % relative change, which is worth knowing before anyone spends a week deriving it.
+
 ### Cash flows
 
 - **Revenue growth is the median of the yearly rates in the window, not a CAGR.** A CAGR reads only
@@ -188,8 +203,9 @@ Ranked by what they cost.
 3. **The Monte Carlo is not centred on the base case.** Boeing's median sits 23.9 % above its own base
    value, Tesla's 6.0 %. The triangular margin distribution is skewed by the spread between the three
    margin bases, so the distribution describes the input set, not the uncertainty around the answer.
-4. **`terminal_roic` is hand-set per company.** It moves the value more than any other single input
-   and has no derivation.
+4. **`terminal_roic` is hand-set per company and has no derivation.** Measured, it is the mildest of
+   the five levers — a 50 % relative move buys 3.5 % to 10.8 % — so it is a credibility problem in an
+   interview, not a numerical one.
 5. **`^GSPC` is a price index without dividends** while the stock series are total-return adjusted.
    The beta is measured across that mismatch.
 6. **Tesla is a scope limit, not an assumption question.** The model values the auto business; it
