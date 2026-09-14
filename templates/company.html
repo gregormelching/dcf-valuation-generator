@@ -286,6 +286,7 @@
   {% endif %}
   <section class="panel">
     <h2 class="panel-title">Quality</h2>
+    <div class="horizontal-scroll">
     <table class="kv-table">
       <tbody>
         <tr>
@@ -306,6 +307,7 @@
         <tr><td>Years excluded</td><td class="num">{{ panel.Quality.ROIC_Excluded_Small_IC }}</td><td class="src">IC below {{ MIN_IC_REVENUE_SHARE | pct }} of revenue</td></tr>
       </tbody>
     </table>
+    </div>
     <p class="table-note">Consistency compares the implicit terminal ROIC with WACC and tests nothing else.</p>
     {% if panel.Quality.ROIC_Source != "Median" %}
     <p class="table-note">No historical ROIC: {{ panel.Quality.ROIC_n }} usable year pairs against a minimum of {{ MIN_YEARS }}, {{ panel.Quality.ROIC_Excluded_Small_IC }} excluded. Implicit ROIC and capital turnover rest on the same invested capital.</p>
@@ -316,6 +318,17 @@
     {% set cod_basis = panel.Provenance.COD_Basis.split("+") | first %}
     <table class="kv-table">
       <tbody>
+        <tr>
+          <td>Start year</td>
+          <td class="num">
+            {% if panel.Provenance.Start_Year_Source == "Clipped_To_Data" %}
+              <span class="badge is-warning">{{ panel.Provenance.Data_Start_Year }}</span>
+            {% else %}
+              {{ panel.Provenance.Data_Start_Year or "N/A" }}
+            {% endif %}
+          </td>
+          <td class="src">{{ "requested " ~ panel.Provenance.Start_Year if panel.Provenance.Start_Year_Source == "Clipped_To_Data" else "" }}</td>
+        </tr>
         <tr><td>Data filed</td><td class="num">{{ panel.Provenance.Data_Filed }}</td></tr>
         <tr><td>Price date</td><td class="num">{{ panel.Provenance.Price_Date }}</td></tr>
         <tr>
@@ -343,7 +356,7 @@
       </tbody>
     </table>
   </section>
-  <section id="mc-panel" data-url="{{ url_for('monte_carlo', symbol = panel.Symbol, as_of = request.args.get('as_of')) }}">
+  <section id="mc-panel" data-url="{{ url_for('monte_carlo', symbol = panel.Symbol, as_of = request.args.get('as_of'), start_year = request.args.get('start_year')) }}">
     <div class="loader-placeholder">
         <div class="spinner"></div>
         <span>Content is loading...</span>

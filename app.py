@@ -51,7 +51,7 @@ VERDICT_BADGE = {
 }
 DESC_ROIC = {
     "Consistent": "Consistent",
-    "Implicit_ROIC < WACC": "Implicit ROIC is smaller than WACC",
+    "Implicit_ROIC < WACC": "Implicit ROIC < WACC",
     "Unavailable": "Unavailable"
 }
 ROIC_BADGE = {
@@ -70,7 +70,7 @@ def index():
 def company(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
-    panel = serialize_company(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
+    panel = serialize_company(symbol, request.args.get("start_year", type = int) or START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF)
     return render_template("company.html", panel = panel, PROJECTION_ROWS = PROJECTION_ROWS, PROJECTION_UNIT = PROJECTION_UNIT, DESC_MARGIN_BASES = DESC_MARGIN_BASES, DESC_IMP_LEVERS = DESC_IMP_LEVERS, VERDICT_BADGE = VERDICT_BADGE, DESC_ROIC = DESC_ROIC, ROIC_BADGE = ROIC_BADGE, MIN_YEARS = MIN_YEARS, MIN_IC_REVENUE_SHARE = MIN_IC_REVENUE_SHARE)
 
 def histogram(draws, offset, bins):
@@ -137,7 +137,7 @@ def histogram(draws, offset, bins):
 def monte_carlo(symbol):
     if symbol not in ASSUMPTIONS:
         abort(404)
-    panel = serialize_monte_carlo(symbol, START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF, draws = MC_PANEL_DRAWS)
+    panel = serialize_monte_carlo(symbol, request.args.get("start_year", type = int) or START_YEAR, YEARS, FREQ, N_MONTHS, as_of = request.args.get("as_of") or DEFAULT_AS_OF, draws = MC_PANEL_DRAWS)
     hist = histogram(panel["Draws"], panel["Offset"], HIST_BINS)
     return render_template("_monte_carlo.html", mc = panel, hist = hist)
 
