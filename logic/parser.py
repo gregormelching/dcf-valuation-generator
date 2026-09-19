@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 from datetime import datetime
@@ -197,8 +198,11 @@ SLOT_SELECTORS = {
 }
 
 def get_response(cik):
+    user_agent = os.environ.get("SEC_USER_AGENT")
+    if not user_agent:
+        raise RuntimeError("SEC_USER_AGENT is not set. SEC EDGAR requires a contact string, e.g. 'Jane Doe jane@example.com'")
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-    response = requests.get(url, headers={"User-Agent": "Gregor Melching gregor.melching.2401@gmail.com"})
+    response = requests.get(url, headers={"User-Agent": user_agent})
     response.raise_for_status()
     return response.json()
 

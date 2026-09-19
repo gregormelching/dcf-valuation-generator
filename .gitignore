@@ -4,3 +4,4 @@ __pycache__/
 *.db
 !tests/fixtures/values.db
 CLAUDE.md
+storage/damodaran/
